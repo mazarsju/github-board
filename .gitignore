@@ -3,3 +3,4 @@ node_modules/
 client/dist/
 server/data/
 .env
+.claude/settings.local.json
