@@ -54,6 +54,18 @@ export class GitHubAPI {
     return this.request('/user');
   }
 
+  /**
+   * Vérifie que le token peut lire chaque dépôt ("owner/repo").
+   * Sans accès, GitHub répond 404 (dépôt privé) ou 403 (SSO SAML non autorisé)
+   * et la recherche ignore silencieusement ces dépôts : d'où ce contrôle explicite.
+   */
+  checkRepoAccess(repos) {
+    return Promise.all(repos.map((repo) => this.request(`/repos/${repo}`).then(
+      (data) => ({ repo, ok: true, private: data.private }),
+      (err) => ({ repo, ok: false, status: err.status, error: err.message }),
+    )));
+  }
+
   /** Recherche de PRs via /search/issues. */
   async searchPRs(query, { sort = 'updated', limit = 30 } = {}) {
     let q = query.trim();

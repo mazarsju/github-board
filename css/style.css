@@ -44,6 +44,13 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
 
+/* Alerte d'accès aux dépôts suivis */
+.alert {
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--panel-2); color: var(--text); border-left: 4px solid var(--yellow);
+}
+.alert ul { margin: 4px 0 0; padding-left: 20px; }
+
 /* Barre du haut */
 .topbar {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;

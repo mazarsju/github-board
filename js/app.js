@@ -1,4 +1,5 @@
 import { GitHubAPI } from './api.js';
+import { REPOS } from './config.js';
 import {
   state, save, uid, activeBoard, prMeta, setPrMeta, isSnoozed,
   exportConfig, importConfig, resetConfig,
@@ -80,8 +81,24 @@ async function login(token) {
   $('#login').classList.add('hidden');
   $('#board').classList.remove('hidden');
   renderTabs();
+  checkRepos();
   await refreshAll();
   scheduleRefresh();
+}
+
+/** Signale les dépôts suivis (js/config.js) que le token ne peut pas lire. */
+async function checkRepos() {
+  const alert = $('#repoAlert');
+  const results = await api.checkRepoAccess(REPOS);
+  const denied = results.filter((r) => !r.ok);
+  alert.classList.toggle('hidden', !denied.length);
+  if (!denied.length) return alert.replaceChildren();
+  alert.replaceChildren(
+    el('strong', {}, `Accès impossible à ${denied.length} dépôt(s) suivi(s) : leurs PRs n'apparaîtront pas.`),
+    el('ul', {}, denied.map((r) => el('li', {},
+      el('code', {}, r.repo), ` — ${r.status === 404 ? 'introuvable ou non accessible avec ce token' : r.error}`))),
+    el('span', { class: 'muted' }, 'Vérifiez le scope repo du token et, pour une organisation SSO, cliquez sur « Configure SSO » → « Authorize » dans les paramètres du token.'),
+  );
 }
 
 function logout() {
@@ -90,6 +107,7 @@ function logout() {
   api = null; me = null;
   clearInterval(refreshTimer);
   $('#avatar').classList.add('hidden');
+  $('#repoAlert').classList.add('hidden');
   $('#board').classList.add('hidden');
   $('#login').classList.remove('hidden');
   $('#boardTabs').replaceChildren();

@@ -1,10 +1,30 @@
 // État persistant de l'application (localStorage, propre à ce navigateur).
+import { REPOS, reposQuery } from './config.js';
+
 const KEY = 'github-board:v1';
+export const REPOS_BOARD_ID = 'repos';
+const REPO_COLORS = ['#0969da', '#8957e5', '#1a7f37', '#bf3989', '#9a6700', '#cf222e'];
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
+/** Tableau des dépôts suivis (js/config.js) : toutes les PRs ouvertes, puis une colonne par dépôt. */
+export function reposBoard(repos = REPOS) {
+  return {
+    id: REPOS_BOARD_ID,
+    name: 'Dépôts',
+    columns: [
+      { id: uid(), name: 'À relire', query: `is:open review-requested:@me ${reposQuery(repos)}`, color: '#cf222e', sort: 'updated', limit: 30, notify: true },
+      ...repos.map((repo, i) => ({
+        id: uid(), name: repo.split('/')[1], query: `is:open ${reposQuery([repo])}`,
+        color: REPO_COLORS[i % REPO_COLORS.length], sort: 'updated', limit: 30, notify: false,
+      })),
+    ],
+  };
+}
+
 export function defaultBoards() {
   return [
+    reposBoard(),
     {
       id: uid(),
       name: 'Mon travail',
@@ -35,16 +55,28 @@ function defaults() {
     activeBoard: boards[0].id,
     prs: {},  // clé "owner/repo#n" → { pinned, hidden, snoozeUntil, note, tags, priority }
     seen: {}, // id colonne → clés déjà vues (détection des nouveautés)
+    reposSeeded: true, // tableau des dépôts suivis déjà ajouté (cf. migrate)
   };
+}
+
+/** Fusionne des données sauvegardées avec les valeurs par défaut. */
+export function migrate(data) {
+  const base = defaults();
+  const next = { ...base, ...data, settings: { ...base.settings, ...data.settings } };
+  // Configurations antérieures au tableau des dépôts : on l'ajoute une seule fois
+  // (s'il est supprimé ensuite, il ne revient pas).
+  if (!data.reposSeeded) {
+    if (!next.boards.some((b) => b.id === REPOS_BOARD_ID)) next.boards = [reposBoard(), ...next.boards];
+    next.reposSeeded = true;
+  }
+  return next;
 }
 
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaults();
-    const data = JSON.parse(raw);
-    const base = defaults();
-    return { ...base, ...data, settings: { ...base.settings, ...data.settings } };
+    return migrate(JSON.parse(raw));
   } catch {
     return defaults();
   }
