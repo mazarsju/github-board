@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  commentBody, editName, editPrompt, parseEdit, parseFindings, PlacementChanged, skills, type SavedFinding,
+  commentBody, editName, editPrompt, parseEdit, parseFindings, parseJiraTickets, PlacementChanged, skills, type SavedFinding,
 } from '../src/skills.ts';
 
 let dir = '';
@@ -20,7 +20,7 @@ async function workdir(findings: unknown[]) {
   const work = join(dir, 'DiliTrust-service-clm-7');
   await mkdir(work);
   await writeFile(join(work, 'findings.json'), JSON.stringify(findings));
-  await writeFile(join(work, 'context.json'), JSON.stringify({ head: 'abcdef1234' }));
+  await writeFile(join(work, 'context.json'), JSON.stringify({ head: 'abcdef1234', jira_tickets_ctx: ['https://dilitrust.atlassian.net/browse/CLM-1'] }));
   return work;
 }
 
@@ -42,6 +42,7 @@ describe('findings files', () => {
         easySummary: 'En clair.', decision: null, url: null, edited: false, editError: null, editSession: null,
       }],
       head: 'abcdef1234',
+      jiraTickets: [{ key: 'CLM-1', url: 'https://dilitrust.atlassian.net/browse/CLM-1' }],
     });
     expect(await s.readFindings(PR, 3_000_000)).toBeNull(); // from an earlier review
     expect(await s.readFindings({ ...PR, number: 8 }, 0)).toBeNull();
@@ -112,6 +113,23 @@ test('parseFindings keeps well-formed findings, most severe first, with their de
     { ...base, id: 3, severity: 'critical', file: 'a.ts', line: 10, startLine: 8, title: 'Crash', body: 'Fix it', suggestion: null, edited: true, editSession: 'e-1' },
     { ...base, id: 4, severity: 'minor', file: '', line: null, startLine: null, title: 'Unknown severity', body: '', suggestion: null, editError: 'Oops' },
     { ...base, id: 2, severity: 'nit', file: 'b.ts', line: 1, startLine: null, title: 'Naming', body: 'Rename', suggestion: 'x', decision: 'posted', url: 'https://u' },
+  ]);
+});
+
+test('parseJiraTickets keeps the Jira ticket URLs only, once each', () => {
+  expect(parseJiraTickets(undefined)).toEqual([]);
+  expect(parseJiraTickets('https://dilitrust.atlassian.net/browse/CLM-1')).toEqual([]);
+  expect(parseJiraTickets([
+    'https://dilitrust.atlassian.net/browse/CLM-4638',
+    'https://dilitrust.atlassian.net/browse/CLM-4638',
+    'https://evil.example.com/browse/CLM-1',
+    'javascript:alert(1)//.atlassian.net/browse/CLM-1',
+    'https://dilitrust.atlassian.net/browse/CLM-1?x=<script>',
+    42,
+    'https://dilitrust.atlassian.net/browse/DTPA-12',
+  ])).toEqual([
+    { key: 'CLM-4638', url: 'https://dilitrust.atlassian.net/browse/CLM-4638' },
+    { key: 'DTPA-12', url: 'https://dilitrust.atlassian.net/browse/DTPA-12' },
   ]);
 });
 

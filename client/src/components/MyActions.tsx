@@ -70,7 +70,7 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
         </tr>
       ))}
       {open === 'synthesis' && <SynthesisDialog review={review} onClose={() => setOpen(null)} onDismiss={onRead} />}
-      {opened && <FindingDialog finding={opened} pr={pr} head={data?.head ?? null} review={review.id} onClose={() => setOpen(null)} />}
+      {opened && <FindingDialog finding={opened} pr={pr} head={data?.head ?? null} jiraTickets={data?.jiraTickets ?? []} review={review.id} onClose={() => setOpen(null)} />}
     </>
   );
 }

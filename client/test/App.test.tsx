@@ -88,7 +88,7 @@ function mockBackend() {
         reviews = [session('DiliTrust/service-clm#2', 'started', true)];
         return json(200, { name: 'review service-clm#2', output: 'abc' });
       case '/api/reviews': return json(200, reviews);
-      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings });
+      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings, jiraTickets: [{ key: 'CLM-4638', url: 'https://dilitrust.atlassian.net/browse/CLM-4638' }] });
       case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Could not start Claude: Not logged in' });
       default: {
         const f = /^\/api\/reviews\/r2\/findings\/(\d+)\/(\w+)$/.exec(url.pathname);
@@ -335,6 +335,9 @@ test('a finished review shows its synthesis in "Actions for me" until marked as 
   expect(within(dialog).getByRole('listitem')).toHaveTextContent('Deux remarques mineures');
   expect(within(dialog).getByRole('link', { name: 'mineures' })).toHaveAttribute('target', '_blank');
   expect(dialog.querySelector('img')).toBeNull();
+  // The Jira tickets the review used, at the top.
+  expect(within(within(dialog).getByRole('navigation', { name: 'Jira tickets' })).getByRole('link', { name: 'CLM-4638' }))
+    .toHaveAttribute('href', 'https://dilitrust.atlassian.net/browse/CLM-4638');
   expect(within(dialog).getByText('claude attach r2')).toBeInTheDocument();
 
   await user.click(within(dialog).getByRole('button', { name: 'Mark as read' }));
@@ -366,6 +369,7 @@ test('the findings of a finished review are stacked under it and open their deta
   await user.click(within(first).getByRole('button'));
   const dialog = await screen.findByRole('dialog', { name: 'Erreur avalée' });
   expect(within(dialog).getByText('tout').tagName).toBe('STRONG');
+  expect(within(dialog).getByRole('link', { name: 'CLM-4638' })).toHaveAttribute('target', '_blank');
   // The easy explanation, in French, is collapsed until opened.
   const easy = within(dialog).getByText('Easy explanation of the problem').closest('details')!;
   expect(easy).not.toHaveAttribute('open');

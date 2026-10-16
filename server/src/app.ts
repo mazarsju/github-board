@@ -227,7 +227,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
         const lines = await client.fileLines(target.owner, target.repo, f.file, saved.head).catch(() => null);
         return { ...f, code: lines && excerpt(lines, f.startLine ?? f.line, f.line) };
       })) : null;
-      res.json({ text, findings, head: saved?.head ?? null });
+      res.json({ text, findings, head: saved?.head ?? null, jiraTickets: saved?.jiraTickets ?? [] });
     } catch (err) {
       claudeError(res, 'Could not read the result', err);
     }

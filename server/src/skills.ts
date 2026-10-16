@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { FindingPlacement, FindingSeverity, ReviewFinding } from '../../shared/types.ts';
+import type { FindingPlacement, FindingSeverity, JiraTicket, ReviewFinding } from '../../shared/types.ts';
 
 /** A tracked PR (owner and repo validated against the tracked repositories). */
 export interface PrTarget {
@@ -20,6 +20,8 @@ export interface SavedFindings {
   findings: SavedFinding[];
   /** Reviewed commit, from the skill's `context.json`. */
   head: string | null;
+  /** Jira tickets the review used as context, from the same file. */
+  jiraTickets: JiraTicket[];
 }
 
 export interface Skills {
@@ -79,9 +81,11 @@ export function skills({
       const info = await stat(file).catch(() => null);
       if (!info || info.mtimeMs < since) return null;
       const findings = parseFindings(JSON.parse(await readFile(file, 'utf8')));
-      const context = JSON.parse(await readFile(join(workdir(pr), 'context.json'), 'utf8').catch(() => '{}')) as { head?: unknown };
+      const context = JSON.parse(await readFile(join(workdir(pr), 'context.json'), 'utf8').catch(() => '{}')) as {
+        head?: unknown; jira_tickets_ctx?: unknown;
+      };
       const head = typeof context.head === 'string' && /^[0-9a-f]{7,40}$/.test(context.head) ? context.head : null;
-      return { findings, head };
+      return { findings, head, jiraTickets: parseJiraTickets(context.jira_tickets_ctx) };
     },
 
     async updateFinding(pr, id, fields) {
@@ -141,6 +145,20 @@ export function parseFindings(raw: unknown): SavedFinding[] {
       editSession: /^[\w-]+$/.test(str(f.edit_session)) ? str(f.edit_session) : null,
     }))
     .sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
+}
+
+/**
+ * Jira tickets of `jira_tickets_ctx` (optional): only Jira ticket URLs, as the skill's script
+ * accepts them, so the page never links anywhere else. Duplicates are dropped.
+ */
+export function parseJiraTickets(raw: unknown): JiraTicket[] {
+  if (!Array.isArray(raw)) return [];
+  const tickets = new Map<string, JiraTicket>();
+  for (const url of raw) {
+    const key = typeof url === 'string' && /^https:\/\/[\w.-]+\.atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)$/.exec(url)?.[1];
+    if (key && !tickets.has(url)) tickets.set(url, { key, url });
+  }
+  return [...tickets.values()];
 }
 
 const EMOJI: Record<FindingSeverity, string> = { critical: '🔴', major: '🟠', minor: '🟡', nit: '⚪' };

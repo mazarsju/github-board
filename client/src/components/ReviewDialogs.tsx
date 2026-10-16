@@ -4,7 +4,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { CodeExcerpt, FindingPlacement, FindingSeverity, PullRequest, ReviewFinding, ReviewSession } from '../../../shared/types.ts';
+import type {
+  CodeExcerpt, FindingPlacement, FindingSeverity, JiraTicket, PullRequest, ReviewFinding, ReviewSession,
+} from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { lineDiff, toLines, type DiffLine } from '../lib/diff.ts';
 import { Modal } from './Modal.tsx';
@@ -198,9 +200,22 @@ function FindingDecision({ finding: f, pr, review, step, setStep, onDone }: {
   );
 }
 
+/** The Jira tickets the review used as context, one button-like link each, opening the ticket. */
+function JiraLinks({ tickets }: { tickets: JiraTicket[] }) {
+  if (!tickets.length) return null;
+  return (
+    <nav className="jira-links" aria-label="Jira tickets">
+      <span className="muted">Jira context:</span>
+      {tickets.map((t) => (
+        <a key={t.url} className="btn small" href={t.url} target="_blank" rel="noopener noreferrer" title={`Open ${t.key} in Jira`}>{t.key}</a>
+      ))}
+    </nav>
+  );
+}
+
 /** Detail of a finding, as GitHub shows a review comment: the code, the comment, the suggested change, and the decision. */
-export function FindingDialog({ finding: f, pr, head, review, onClose }: {
-  finding: ReviewFinding; pr: PullRequest; head: string | null; review: string; onClose: () => void;
+export function FindingDialog({ finding: f, pr, head, jiraTickets, review, onClose }: {
+  finding: ReviewFinding; pr: PullRequest; head: string | null; jiraTickets: JiraTicket[]; review: string; onClose: () => void;
 }) {
   const [step, setStep] = useState<Step>('view');
   const [label, className] = SEVERITY[f.severity];
@@ -211,6 +226,7 @@ export function FindingDialog({ finding: f, pr, head, review, onClose }: {
     : null;
   return (
     <Modal title={f.title} subtitle={`${pr.repo}#${pr.number} · finding ${f.id}`} cancelLabel="Close" className="wide code" onClose={onClose}>
+      <JiraLinks tickets={jiraTickets} />
       <p className="finding-meta">
         <span className={`badge ${className}`}>{label}</span>
         {f.edited && <span className="badge" title="Rewritten at your request">edited</span>}
@@ -260,7 +276,10 @@ export function SynthesisDialog({ review, onClose, onDismiss }: { review: Review
     >
       {error ? <p className="error">{error.message}</p>
         : isPending ? <p className="muted">Loading…</p>
-          : <Synthesis text={data.text ?? '_The session left no final message._'} />}
+          : <>
+            <JiraLinks tickets={data.jiraTickets ?? []} />
+            <Synthesis text={data.text ?? '_The session left no final message._'} />
+          </>}
       {/* A finished session is no longer found by name: attach takes its id. */}
       <p className="hint">To continue the conversation: <code>claude attach {review.id}</code></p>
     </Modal>

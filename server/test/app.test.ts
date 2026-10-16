@@ -55,7 +55,9 @@ function memorySkills(byPr: Record<string, { since: number; findings: SavedFindi
     async readFindings(pr, since) {
       calls.push(`${key(pr)}@${since}`);
       const saved = byPr[key(pr)];
-      return saved && saved.since >= since ? { findings: saved.findings.map((f) => ({ ...f })), head: 'abc1234' } : null;
+      return saved && saved.since >= since
+        ? { findings: saved.findings.map((f) => ({ ...f })), head: 'abc1234', jiraTickets: [{ key: 'CLM-1', url: 'https://x.atlassian.net/browse/CLM-1' }] }
+        : null;
     },
     async updateFinding(pr, id, fields) {
       const f = byPr[key(pr)]!.findings.find((x) => x.id === id)!;
@@ -201,7 +203,8 @@ describe('API', () => {
       { key: 'DiliTrust/webapp-clm#4', id: 'd1', name: 'review webapp-clm#4', running: false, state: 'done', startedAt: 1 },
     ]);
     // Each finding comes with its code at the reviewed commit, when GitHub has it.
-    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: { text: 'LGTM', head: 'abc1234', findings: [
+    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: {
+      text: 'LGTM', head: 'abc1234', jiraTickets: [{ key: 'CLM-1', url: 'https://x.atlassian.net/browse/CLM-1' }], findings: [
       { ...shown(finding()), editing: false, code: { start: 1, lines: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] } },
       { ...shown(finding({ id: 2, file: 'gone.ts' })), editing: false, code: null },
     ] } });

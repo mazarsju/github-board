@@ -143,6 +143,14 @@ export interface ReviewResult {
   findings: ReviewFinding[] | null;
   /** Head commit the findings refer to, when known. */
   head: string | null;
+  /** Jira tickets the review read and used as context. */
+  jiraTickets: JiraTicket[];
+}
+
+/** A Jira ticket, e.g. `{ key: 'CLM-4638', url: 'https://dilitrust.atlassian.net/browse/CLM-4638' }`. */
+export interface JiraTicket {
+  key: string;
+  url: string;
 }
 
 /** Status of a PR in the list, from most to least blocking. */
