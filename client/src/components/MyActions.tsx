@@ -7,6 +7,7 @@ import type { MyAction, PullRequest, ReviewSession } from '../../../shared/types
 import { api } from '../lib/api.ts';
 import { useAppState } from '../state/AppState.tsx';
 import { PrRow } from './PrRow.tsx';
+import { useToast } from './Toast.tsx';
 import { FindingDialog, findingPlace, SEVERITY, SynthesisDialog } from './ReviewDialogs.tsx';
 
 const COLUMNS = 6;
@@ -91,8 +92,14 @@ export function MyActions({ filter, refresh, pulls, reviews }: {
     .filter((r) => !r.running && !state.settings.dismissedReviews.includes(r.id))
     .map((review) => ({ review, pr: byKey.get(review.key) }))
     .filter((s): s is { review: ReviewSession; pr: PullRequest } => !!s.pr && matchesFilter(s.pr, filter));
+  const toast = useToast();
   const dismiss = (review: ReviewSession) => {
     update((s) => ({ ...s, settings: { ...s.settings, dismissedReviews: [...s.settings.dismissedReviews, review.id] } }));
+    // The review is over for the user: stop its background sessions (conversations are kept).
+    void api.stopReview(review.id).then(({ stopped, failed }) => {
+      if (failed.length) toast(`Could not stop ${failed.length} Claude session${failed.length === 1 ? '' : 's'}: ${failed[0]!.error}`, 10_000);
+      else if (stopped.length) toast(`Stopped ${stopped.length} Claude background session${stopped.length === 1 ? '' : 's'}`);
+    }, (err: Error) => toast(`Could not stop the Claude sessions: ${err.message}`, 10_000));
   };
 
   if (error && !syntheses.length) return <p className="my-actions-empty error">Actions for me unavailable: {error.message}</p>;

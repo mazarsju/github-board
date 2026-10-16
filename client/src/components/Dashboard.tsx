@@ -2,6 +2,7 @@ import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import type { SessionInfo } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
+import { BackgroundSessions } from './BackgroundSessions.tsx';
 import { PrList } from './PrList.tsx';
 import { RepoAlert } from './RepoAlert.tsx';
 import { SettingsDialog } from './SettingsDialog.tsx';
@@ -30,6 +31,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ['pulls'] }),
     queryClient.invalidateQueries({ queryKey: ['reviews'] }),
+    queryClient.invalidateQueries({ queryKey: ['background'] }),
   ]);
 
   // Shortcuts: `/` filter, `r` refresh.
@@ -54,6 +56,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
           <input ref={filterRef} type="search" value={filter} onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter (title, project, author)…" aria-label="Filter" />
           <button type="button" className={`btn${fetching ? ' spinning' : ''}`} title="Refresh (R)" aria-label="Refresh" onClick={() => void refresh()}>⟳</button>
+          <BackgroundSessions />
           <button type="button" className="btn" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}>⚙</button>
           <img className="avatar" src={session.user.avatarUrl} alt="" title={`Signed in: ${session.user.login}`} />
         </div>

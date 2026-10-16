@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { defaultState } from '../../shared/state.ts';
-import type { AppState, MyAction, PrDetails, PullRequest, ReviewFinding, ReviewSession } from '../../shared/types.ts';
+import type { AppState, MyAction, PrDetails, PullRequest, ReviewFinding, ReviewSession, RunningSession } from '../../shared/types.ts';
 import { App } from '../src/App.tsx';
 import { ToastProvider } from '../src/components/Toast.tsx';
 
@@ -43,6 +43,7 @@ let initialState: AppState;
 let actions: MyAction[];
 let reviews: ReviewSession[];
 let findings: ReviewFinding[];
+let background: RunningSession[];
 let decisions: string[];
 
 const finding = (extra: Partial<ReviewFinding>): ReviewFinding => ({
@@ -88,9 +89,19 @@ function mockBackend() {
         reviews = [session('DiliTrust/service-clm#2', 'started', true)];
         return json(200, { name: 'review service-clm#2', output: 'abc' });
       case '/api/reviews': return json(200, reviews);
+      case '/api/background': return json(200, background);
+      case '/api/reviews/r2/stop':
+        if (init.method !== 'POST' || new Headers(init.headers).get('X-Github-Board') !== '1') return json(403, { error: 'Denied' });
+        decisions.push('stop r2');
+        return json(200, { stopped: ['r2', 'e1'], failed: [] });
       case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings, jiraTickets: [{ key: 'CLM-4638', url: 'https://dilitrust.atlassian.net/browse/CLM-4638' }] });
       case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Could not start Claude: Not logged in' });
       default: {
+        const stop = /^\/api\/background\/([\w-]+)\/stop$/.exec(url.pathname);
+        if (stop && init.method === 'POST') {
+          background = background.filter((s) => s.id !== stop[1]);
+          return json(204);
+        }
         const f = /^\/api\/reviews\/r2\/findings\/(\d+)\/(\w+)$/.exec(url.pathname);
         if (f) {
           const finding = findings.find((x) => x.id === Number(f[1]))!;
@@ -120,7 +131,7 @@ const row = async (title: string) => {
 };
 
 beforeEach(() => {
-  loggedIn = false; saved = []; initialState = defaultState(); actions = []; reviews = []; findings = FINDINGS(); decisions = [];
+  loggedIn = false; saved = []; initialState = defaultState(); actions = []; reviews = []; findings = FINDINGS(); decisions = []; background = [];
   mockBackend();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -366,6 +377,9 @@ test('a finished review shows its synthesis in "Actions for me" until marked as 
   expect(screen.queryByRole('region', { name: 'Actions for me' })).not.toBeInTheDocument();
   expect(screen.getByText('Actions for me: nothing pending ✓')).toBeInTheDocument();
   await waitFor(() => expect(saved.at(-1)?.settings.dismissedReviews).toEqual(['r2']));
+  // Its background sessions are stopped.
+  expect(decisions).toEqual(['stop r2']);
+  expect(await screen.findByText('Stopped 2 Claude background sessions')).toBeInTheDocument();
   // The PR can be reviewed again.
   expect(within(await row('PR de DT_Public_API')).getByRole('button', { name: /Review with Claude/ })).toBeInTheDocument();
 });
@@ -477,6 +491,29 @@ test('editing a finding sends the request to Claude, then waits for the new vers
   expect(await within(dialog).findByText(/Claude is rewriting this finding/)).toBeInTheDocument();
   expect(within(dialog).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
   expect(within(within(section).getByRole('button', { name: /Injection SQL/ })).getByText('editing…')).toBeInTheDocument();
+});
+
+test('the top bar counts the running background sessions, which can be stopped from its dialog', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  const run = (id: string, name: string): RunningSession => ({ id, name, state: 'done', startedAt: Date.now() - 3_600_000 });
+  background = [run('a1', 'review service-clm#7'), run('a2', 'review webapp-clm#1'), run('a3', 'edit service-clm#7 finding 1'), run('a4', 'mine'), run('a5', 'other')];
+  renderApp();
+
+  const counter = await screen.findByRole('button', { name: '5 Claude background sessions running: too many, stop some' });
+  expect(counter).toHaveTextContent('⚠ ✦ 5');
+  expect(counter).toHaveClass('too-many');
+  await user.click(counter);
+  const dialog = await screen.findByRole('dialog', { name: 'Claude background sessions' });
+  expect(within(dialog).getAllByRole('listitem').map((li) => li.querySelector('.session-name')!.textContent))
+    .toEqual(['review service-clm#7', 'review webapp-clm#1', 'edit service-clm#7 finding 1', 'mine', 'other']);
+
+  await user.click(within(dialog).getByRole('button', { name: 'Stop review webapp-clm#1' }));
+  await waitFor(() => expect(within(dialog).getAllByRole('listitem')).toHaveLength(4));
+  // 4 is not too many any more.
+  const back = screen.getByRole('button', { name: '4 Claude background sessions running' });
+  expect(back).not.toHaveClass('too-many');
+  expect(back).toHaveTextContent('✦ 4');
 });
 
 test('the filter narrows the list', async () => {

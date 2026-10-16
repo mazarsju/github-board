@@ -27,12 +27,13 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
   - Ties keep the newest PR first. A PR whose details are still loading goes after the scored ones, then moves to its place.
 - **Review with Claude** (✦ button at the end of each row of the project list): starts a **background Claude Code session** on the server's machine, named `review <project>#<number>`, that runs the user's **`/pr-review <PR URL>`** skill (in `~/.claude/skills/pr-review`). The skill reviews the PR without posting anything and saves its findings to `~/.cache/pr-review/<owner>-<repo>-<number>/findings.json`.
   - **While it runs**, the ✦ button pulses (yellow when the session waits for an answer); clicking it shows the command that opens the session in a terminal, `claude attach "review service-clm#16664"`, with a copy button. Sessions are checked every 5 seconds while one runs.
-  - **Once finished**, "Actions for me" lists the PR with a **Review summary** button showing the session's final answer full screen, under the Jira tickets the review used as context (the skill's optional `jira_tickets_ctx`: one button per ticket, labeled with its key, opening it in Jira), rendered as Markdown (GitHub flavor: tables, checklists; raw HTML is ignored, links open in a new tab), and the command to resume the conversation, `claude attach <session id>` (a finished session is no longer found by its name). **Mark as read** removes it (saved with your settings); the PR can then be reviewed again. A session that ended in error is flagged **Review failed**.
+  - **Once finished**, "Actions for me" lists the PR with a **Review summary** button showing the session's final answer full screen, under the Jira tickets the review used as context (the skill's optional `jira_tickets_ctx`: one button per ticket, labeled with its key, opening it in Jira), rendered as Markdown (GitHub flavor: tables, checklists; raw HTML is ignored, links open in a new tab), and the command to resume the conversation, `claude attach <session id>` (a finished session is no longer found by its name). **Mark as read** removes it (saved with your settings) and stops the background sessions still running for it — the review session, the earlier review sessions of the same PR and the sessions editing its findings — with `claude stop` (their conversations are kept, `claude attach <id>` still opens them); the PR can then be reviewed again. A session that ended in error is flagged **Review failed**.
   - **Findings**: each finding is stacked under the entry (which says **No findings** when there are none), most severe first: severity (Critical, Major, Minor, Nit), title, `file:line`, and a `suggestion` tag when it comes with a fix. Clicking one opens its detail, laid out like a GitHub review comment, with at the top the same Jira ticket buttons, then a collapsed 👶 **Easy explanation of the problem** (the skill's `easy_summary`, plain sentences in French, never posted), then the commented lines highlighted among their surrounding code (fetched from GitHub at the reviewed commit), the comment (Markdown), the suggested change as a diff of those lines, and a link to the lines on GitHub.
   - **Deciding on a finding**, from its detail, like `/pick-change` does (the decision is saved in the skill's `findings.json`, so a later `/pick-change <PR URL>` continues from there):
     - **Approve** shows the exact comment that will be posted and where it lands (inline on the lines, on the file when the lines are outside the PR's diff, or as a general PR comment); **Post on GitHub** then posts it with `/pick-change`'s own script (`post_comment.py`, with your `gh` login). Nothing is posted before that second click, and the server refuses if the comment or its placement changed in between. The finding then leaves the list (its open detail shows a link to the comment).
     - **Reject** drops the finding: it leaves the list. Once every finding is posted or rejected, the entry says **All findings handled**.
     - **Edit** asks what should change, and sends it to a background Claude session that rewrites that finding only (comment, suggestion, easy explanation) and posts nothing. The finding is tagged **editing…** meanwhile (`claude attach "edit <project>#<number> finding <id>"` to follow it); once the session is over, the rewritten finding (tagged **edited**) is shown again with the same three choices.
+- **Background sessions counter** (✦ N in the top bar): the Claude background sessions whose process still runs on the server's machine, whatever started them (finished sessions keep theirs until stopped), checked every 15 seconds. Above 4 it turns red with a ⚠. Click it to list them (name, CLI state, age, id) and **Stop** any of them with `claude stop` (the conversation is kept). Only shown when the app runs on the server's machine.
 - Instant filter on title, project, number and author
 - Auto refresh, API quota counter, light/dark theme
 - Shortcuts: `/` filter, `r` refresh
@@ -99,13 +100,13 @@ server/
   src/app.ts         Express REST API (/api) + serving of the built frontend
   src/github.ts      GitHub client: REST (open PRs, PR details, file contents, repository access, quota), GraphQL (actions for me)
   src/store.ts       Per-user JSON persistence of the settings
-  src/claude.ts      Local Claude Code CLI: starts, lists and reads the review (and finding edit) sessions
+  src/claude.ts      Local Claude Code CLI: starts, lists, reads and stops the review (and finding edit) sessions
   src/skills.ts      Files and scripts of the /pr-review and /pick-change skills: findings, decisions, posting
   test/              Backend tests
 client/
   index.html, vite.config.ts
   src/App.tsx        Session and settings loading
-  src/components/    PR list and rows, "Actions for me", top bar, settings dialog, login
+  src/components/    PR list and rows, background sessions counter, "Actions for me", top bar, settings dialog, login
   src/state/         Settings (React context, automatic saving)
   src/lib/           Backend API client, formatting, line diff of suggestions
   test/              Frontend tests (Testing Library)
@@ -123,6 +124,9 @@ client/
 | `POST /api/pulls/:owner/:repo/:number/review` | Starts a background Claude Code session (`claude --bg`) on the server's machine; requires the `X-Github-Board: 1` header and a request from that machine |
 | `GET /api/reviews` | Review sessions of the tracked repositories (latest per PR, running or finished), from `claude agents --json --all`; same restrictions |
 | `GET /api/reviews/:id/result` | Result of a finished review session: its final answer (from its transcript), and the findings its `/pr-review` skill saved for the PR since the session started, each with its code excerpt at the reviewed commit, and the Jira tickets used as context (`jiraTickets`; only `https://<site>.atlassian.net/browse/<KEY>` URLs are kept); same restrictions |
+| `GET /api/background` | Background Claude sessions whose process still runs, newest first: `{id, name, state, startedAt}`; same restrictions |
+| `POST /api/background/:id/stop` | Stops one of them (`claude stop`); same restrictions |
+| `POST /api/reviews/:id/stop` | Stops the background sessions still running for a review (itself, earlier reviews of its PR, its finding edits): `{stopped, failed}`; same restrictions |
 | `GET /api/reviews/:id/findings/:fid/placement` | The exact comment a finding would be posted as, and where it would land (`inline`, `file` or `pr`); same restrictions |
 | `POST /api/reviews/:id/findings/:fid/post` | Posts the approved comment (`{mode, body}`, refused with 409 when it or its placement changed) and records the decision; same restrictions |
 | `POST /api/reviews/:id/findings/:fid/reject` | Records the finding as dropped; same restrictions |

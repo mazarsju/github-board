@@ -81,6 +81,15 @@ export interface MyAction {
   ciFailed: boolean;
 }
 
+/** A background Claude Code session of this machine whose process still runs (any, not only the board's). */
+export interface RunningSession {
+  id: string;
+  name: string;
+  /** Raw state from the CLI (working, waiting, blocked, done…): a finished session keeps its process until stopped. */
+  state: string;
+  startedAt: number;
+}
+
 /** Background Claude Code session started by the "Review" button, latest one per PR. */
 export interface ReviewSession {
   /** PR key, "owner/repo#number". */

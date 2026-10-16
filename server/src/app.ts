@@ -6,9 +6,9 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { z } from 'zod';
 import { REPOS } from '../../shared/config.ts';
 import { appStateSchema } from '../../shared/schema.ts';
-import type { ReviewFinding, SessionInfo } from '../../shared/types.ts';
+import type { ReviewFinding, RunningSession, SessionInfo } from '../../shared/types.ts';
 import {
-  claudeCli, isLoopback, isOver, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession, type ClaudeCli,
+  attachedSessions, claudeCli, isLoopback, isOver, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession, type ClaudeCli,
 } from './claude.ts';
 import { excerpt, GitHubClient, GitHubError } from './github.ts';
 import {
@@ -185,6 +185,32 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     }
   });
 
+  // Every background session whose process still runs, for the top bar's counter, newest first.
+  api.get('/background', localOnly, async (_req, res) => {
+    try {
+      const running: RunningSession[] = (await claude.listBackground())
+        .filter((s) => s.alive)
+        .sort((a, b) => b.startedAt - a.startedAt)
+        .map(({ id, name, state, startedAt }) => ({ id, name, state, startedAt }));
+      res.json(running);
+    } catch (err) {
+      claudeError(res, 'Could not read the Claude sessions', err);
+    }
+  });
+
+  // Stops one of them; only an id from the CLI's own listing is passed to `claude stop`.
+  api.post('/background/:id/stop', localOnly, async (req, res) => {
+    const { id } = z.object({ id: z.string().regex(/^[\w-]+$/) }).parse(req.params);
+    try {
+      const session = (await claude.listBackground()).find((s) => s.id === id && s.alive);
+      if (!session) return void res.status(404).json({ error: 'No running session with this id.' });
+      await claude.stop(session.id);
+      res.status(204).end();
+    } catch (err) {
+      claudeError(res, 'Could not stop the session', err);
+    }
+  });
+
   /** A finished review session's PR and the findings its skill saved, from the CLI's own listing. */
   async function reviewOf(id: string) {
     const all = await claude.listBackground();
@@ -230,6 +256,24 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
       res.json({ text, findings, head: saved?.head ?? null, jiraTickets: saved?.jiraTickets ?? [] });
     } catch (err) {
       claudeError(res, 'Could not read the result', err);
+    }
+  });
+
+  // "Mark as read": stops the sessions still running for this review (their conversations are kept).
+  api.post('/reviews/:id/stop', localOnly, async (req, res) => {
+    const { id } = z.object({ id: z.string().regex(/^[\w-]+$/) }).parse(req.params);
+    try {
+      const all = await claude.listBackground();
+      const review = all.find((s) => s.id === id);
+      if (!review) return void res.status(404).json({ error: 'Unknown session.' });
+      const stopped: string[] = [];
+      const failed: { id: string; error: string }[] = [];
+      for (const s of attachedSessions(review, all, REPOS)) {
+        await claude.stop(s.id).then(() => stopped.push(s.id), (err: Error) => failed.push({ id: s.id, error: err.message }));
+      }
+      res.json({ stopped, failed });
+    } catch (err) {
+      claudeError(res, 'Could not stop the sessions', err);
     }
   });
 

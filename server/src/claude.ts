@@ -17,6 +17,8 @@ export interface BackgroundSession {
   /** Whether a turn is running ("idle" between turns). Optional: older CLIs may not report it. */
   status?: string;
   startedAt: number;
+  /** Its process still runs (the CLI lists a pid), finished or not: `claude stop` ends it. */
+  alive?: boolean;
 }
 
 export interface ClaudeCli {
@@ -26,6 +28,8 @@ export interface ClaudeCli {
   listBackground(): Promise<BackgroundSession[]>;
   /** Last answer of a session (its final text message), or null when there is none yet. */
   readResult(sessionId: string): Promise<string | null>;
+  /** Stops a background session (`claude stop`); its conversation is kept. */
+  stop(id: string): Promise<void>;
 }
 
 /** Variables not passed on to Claude: the server's GitHub token, and the markers of a parent Claude Code session. */
@@ -62,13 +66,20 @@ export function claudeCli({
     startBackground: (prompt, name) => run(['--bg', '--name', name, prompt]),
 
     async listBackground() {
-      const sessions = JSON.parse(await run(['agents', '--json', '--all']) || '[]') as (Partial<BackgroundSession> & { kind?: string })[];
+      const sessions = JSON.parse(await run(['agents', '--json', '--all']) || '[]') as (Partial<BackgroundSession> & { kind?: string; pid?: number })[];
       return sessions
         .filter((s) => s.kind === 'background' && s.id && s.sessionId && s.name)
         .map((s) => ({
           id: s.id!, sessionId: s.sessionId!, name: s.name!, state: s.state ?? '', startedAt: s.startedAt ?? 0,
           ...(s.status ? { status: s.status } : {}),
+          ...(s.pid ? { alive: true } : {}),
         }));
+    },
+
+    async stop(id) {
+      // Never an option: ids from the CLI's listing start with a letter or a digit.
+      if (!/^\w[\w-]*$/.test(id)) throw new Error(`Invalid session id: ${id}`);
+      await run(['stop', id]);
     },
 
     async readResult(sessionId) {
@@ -117,6 +128,21 @@ export function reviewTarget(name: string, repos: readonly string[]): { owner: s
   if (!full) return null;
   const [owner = '', repo = ''] = full.split('/');
   return { owner, repo, number: Number(match[2]) };
+}
+
+/**
+ * Sessions still running for the review `review`: itself, the earlier reviews of the same PR,
+ * and the sessions editing its findings (named `edit <repo>#<n> finding <id>`).
+ */
+export function attachedSessions(review: BackgroundSession, sessions: BackgroundSession[], repos: readonly string[]): BackgroundSession[] {
+  const target = reviewTarget(review.name, repos);
+  if (!target) return review.alive ? [review] : [];
+  const edits = `edit ${target.repo}#${target.number} finding `;
+  return sessions.filter((s) => s.alive && (
+    s.id === review.id
+    || (s.name === review.name && s.startedAt <= review.startedAt)
+    || s.name.startsWith(edits)
+  ));
 }
 
 /** States of a session that is over. */

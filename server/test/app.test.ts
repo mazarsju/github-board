@@ -165,6 +165,7 @@ describe('API', () => {
       },
       listBackground: async () => [],
       readResult: async () => null,
+      stop: async () => {},
     };
     const { call } = await start({ envToken: 'good', claude });
     const post = (path: string, headers: Record<string, string> = { 'X-Github-Board': '1' }) => call(path, { method: 'POST', headers });
@@ -192,6 +193,7 @@ describe('API', () => {
       startBackground: async () => '',
       listBackground: async () => sessions,
       readResult: async (sessionId) => { read.push(sessionId); return sessionId === 'uuid-2' ? 'LGTM' : null; },
+      stop: async () => {},
     };
     const { skills, calls } = memorySkills({ 'DiliTrust/webapp-clm#3': { since: 1, findings: [finding(), finding({ id: 2, file: 'gone.ts' })] } });
     const { call } = await start({ envToken: 'good', claude, skills });
@@ -219,6 +221,61 @@ describe('API', () => {
     expect((await get('/reviews/b1/result', {})).status).toBe(403);
   });
 
+  test('background: lists the sessions still running, and stops one of them', async () => {
+    const sessions: BackgroundSession[] = [
+      { id: 'a1', sessionId: 'u1', name: 'review service-clm#7', state: 'done', startedAt: 1, alive: true },
+      { id: 'b1', sessionId: 'u2', name: 'my own session', state: 'working', status: 'busy', startedAt: 3, alive: true },
+      { id: 'c1', sessionId: 'u3', name: 'stopped one', state: 'stopped', startedAt: 2 },
+    ];
+    const stops: string[] = [];
+    const claude: ClaudeCli = {
+      startBackground: async () => '',
+      listBackground: async () => sessions,
+      readResult: async () => null,
+      stop: async (id) => { stops.push(id); },
+    };
+    const { call } = await start({ envToken: 'good', claude });
+    const local = { 'X-Github-Board': '1' };
+    expect((await call('/background', { headers: local })).body).toEqual([
+      { id: 'b1', name: 'my own session', state: 'working', startedAt: 3 },
+      { id: 'a1', name: 'review service-clm#7', state: 'done', startedAt: 1 },
+    ]);
+    expect((await call('/background/b1/stop', { method: 'POST', headers: local })).status).toBe(204);
+    expect((await call('/background/c1/stop', { method: 'POST', headers: local })).status).toBe(404); // not running
+    expect((await call('/background/zz/stop', { method: 'POST', headers: local })).status).toBe(404);
+    expect((await call('/background/a1/stop', { method: 'POST' })).status).toBe(403);
+    expect((await call('/background')).status).toBe(403);
+    expect(stops).toEqual(['b1']);
+  });
+
+  test('mark as read: stops the sessions still running for the review', async () => {
+    const sessions: BackgroundSession[] = [
+      { id: 'old', sessionId: 'u0', name: 'review service-clm#7', state: 'done', startedAt: 1, alive: true },
+      { id: 'r1', sessionId: 'u1', name: 'review service-clm#7', state: 'done', startedAt: 5, alive: true },
+      { id: 'e1', sessionId: 'u2', name: 'edit service-clm#7 finding 2', state: 'working', startedAt: 6, alive: true },
+      { id: 'gone', sessionId: 'u3', name: 'edit service-clm#7 finding 1', state: 'stopped', startedAt: 6 },
+      { id: 'other', sessionId: 'u4', name: 'review service-clm#8', state: 'done', startedAt: 6, alive: true },
+      { id: 'mine', sessionId: 'u5', name: 'my own session', state: 'working', startedAt: 6, alive: true },
+    ];
+    const stops: string[] = [];
+    const claude: ClaudeCli = {
+      startBackground: async () => '',
+      listBackground: async () => sessions,
+      readResult: async () => null,
+      async stop(id) {
+        if (id === 'e1') throw new Error('No such session');
+        stops.push(id);
+      },
+    };
+    const { call } = await start({ envToken: 'good', claude });
+    const post = (path: string, headers: Record<string, string> = { 'X-Github-Board': '1' }) => call(path, { method: 'POST', headers });
+    expect(await post('/reviews/r1/stop')).toMatchObject({ status: 200, body: { stopped: ['old', 'r1'], failed: [{ id: 'e1', error: 'No such session' }] } });
+    expect(stops).toEqual(['old', 'r1']);
+    expect((await post('/reviews/zz/stop')).status).toBe(404);
+    expect((await post('/reviews/r1/stop', {})).status).toBe(403);
+    expect(stops).toHaveLength(2);
+  });
+
   describe('findings', () => {
     const review: BackgroundSession = { id: 'r1', sessionId: 'uuid-r', name: 'review service-clm#7', state: 'done', startedAt: 5 };
     /** An app with one finished review of service-clm#7 and its findings; `sessions` can be changed. */
@@ -233,6 +290,7 @@ describe('API', () => {
         },
         listBackground: async () => sessions,
         readResult: async (sessionId) => answers[sessionId] ?? null,
+        stop: async () => {},
       };
       const mem = memorySkills({ 'DiliTrust/service-clm#7': { since: 5, findings } });
       const { call } = await start({ envToken: 'good', claude, skills: mem.skills });

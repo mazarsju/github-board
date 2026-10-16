@@ -1,9 +1,9 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  claudeCli, isLoopback, isOver, lastAnswer, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
+  attachedSessions, claudeCli, isLoopback, isOver, lastAnswer, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
 } from '../src/claude.ts';
 
 let dir = '';
@@ -32,6 +32,13 @@ describe('claudeCli', () => {
     expect(out).toBe(`--bg|--name|review r#1; rm -rf ~|/standup|token=none cc=none keep=yes cwd=${dir}`);
   });
 
+  test('stops a session with `claude stop`, refusing odd ids', async () => {
+    const bin = await fakeClaude('printf "%s|" "$@" > "$(dirname "$0")/args"');
+    await claudeCli({ bin }).stop('c47f7202');
+    expect(await readFile(join(dir, 'args'), 'utf8')).toBe('stop|c47f7202|');
+    await expect(claudeCli({ bin }).stop('--all')).rejects.toThrow('Invalid session id');
+  });
+
   test('reports a missing executable and CLI errors', async () => {
     await expect(claudeCli({ bin: '/nonexistent/claude' }).startBackground('/x', 'n')).rejects.toThrow('"/nonexistent/claude" not found');
     const bin = await fakeClaude('echo "Not logged in" >&2; exit 1');
@@ -51,13 +58,13 @@ cat <<'JSON'
 [
   { "name": "my terminal", "status": "idle", "cwd": "/x", "kind": "interactive", "startedAt": 1 },
   { "id": "dd52f6fd", "sessionId": "dd52f6fd-uuid", "name": "review service-clm#7", "state": "done", "kind": "background", "startedAt": 2, "cwd": "/x" },
-  { "id": "c47f7202", "sessionId": "c47f-uuid", "name": "edit service-clm#7 finding 1", "state": "working", "status": "idle", "kind": "background", "startedAt": 3 },
+  { "id": "c47f7202", "sessionId": "c47f-uuid", "name": "edit service-clm#7 finding 1", "state": "working", "status": "idle", "kind": "background", "startedAt": 3, "pid": 67051 },
   { "id": "broken", "kind": "background" }
 ]
 JSON`);
     expect(await claudeCli({ bin }).listBackground()).toEqual([
       { id: 'dd52f6fd', sessionId: 'dd52f6fd-uuid', name: 'review service-clm#7', state: 'done', startedAt: 2 },
-      { id: 'c47f7202', sessionId: 'c47f-uuid', name: 'edit service-clm#7 finding 1', state: 'working', status: 'idle', startedAt: 3 },
+      { id: 'c47f7202', sessionId: 'c47f-uuid', name: 'edit service-clm#7 finding 1', state: 'working', status: 'idle', startedAt: 3, alive: true },
     ]);
   });
 
@@ -117,6 +124,17 @@ describe('review sessions', () => {
       { key: 'DiliTrust/webapp-clm#5', id: 'f', name: 'review webapp-clm#5', running: false, state: 'failed', startedAt: 2 },
     ]);
   });
+});
+
+test('attachedSessions: the review, earlier reviews of its PR and its finding edits, still running', () => {
+  const s = (id: string, name: string, startedAt: number, alive = true): BackgroundSession => ({ id, sessionId: id, name, state: 'done', startedAt, alive });
+  const review = s('r2', 'review service-clm#7', 5);
+  const all = [
+    s('r1', 'review service-clm#7', 1), review, s('r3', 'review service-clm#7', 9), // r3: a newer review, kept
+    s('e1', 'edit service-clm#7 finding 1', 6), s('e2', 'edit service-clm#7 finding 2', 7, false),
+    s('o1', 'review service-clm#77', 2), s('o2', 'edit service-clm#77 finding 1', 2), s('m1', 'my own session', 2),
+  ];
+  expect(attachedSessions(review, all, ['DiliTrust/service-clm']).map((x) => x.id)).toEqual(['r1', 'r2', 'e1']);
 });
 
 test('isOver: finished states, and a session still "working" although its last turn ended', () => {

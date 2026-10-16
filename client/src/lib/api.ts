@@ -1,6 +1,6 @@
 // HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
-  AppState, FindingPlacement, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
+  AppState, FindingPlacement, MyAction, PrDetails, RunningSession, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
 } from '../../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -78,6 +78,12 @@ export const api = {
   reviews: () => request<ReviewSession[]>('/reviews', { headers: LOCAL }),
   /** Final answer and findings of a finished review session. */
   reviewResult: (id: string) => request<ReviewResult>(`/reviews/${encodeURIComponent(id)}/result`, { headers: LOCAL }),
+  /** Background Claude sessions of the server's machine whose process still runs. */
+  background: () => request<RunningSession[]>('/background', { headers: LOCAL }),
+  stopBackground: (id: string) => request<void>(`/background/${encodeURIComponent(id)}/stop`, { method: 'POST', headers: LOCAL }),
+  /** Stops the background sessions still running for a review (itself, earlier reviews of the PR, finding edits). */
+  stopReview: (id: string) =>
+    request<{ stopped: string[]; failed: { id: string; error: string }[] }>(`/reviews/${encodeURIComponent(id)}/stop`, { method: 'POST', headers: LOCAL }),
   /** The exact comment a finding would be posted as, and where. */
   findingPlacement: (review: string, finding: number) =>
     request<{ mode: FindingPlacement; body: string }>(`${findingPath(review, finding)}/placement`, { headers: LOCAL }),
