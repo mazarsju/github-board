@@ -14,6 +14,8 @@ export interface BackgroundSession {
   name: string;
   /** "done" or "failed" once finished; other values (working, waiting…) mean it is still going. */
   state: string;
+  /** Whether a turn is running ("idle" between turns). Optional: older CLIs may not report it. */
+  status?: string;
   startedAt: number;
 }
 
@@ -63,7 +65,10 @@ export function claudeCli({
       const sessions = JSON.parse(await run(['agents', '--json', '--all']) || '[]') as (Partial<BackgroundSession> & { kind?: string })[];
       return sessions
         .filter((s) => s.kind === 'background' && s.id && s.sessionId && s.name)
-        .map((s) => ({ id: s.id!, sessionId: s.sessionId!, name: s.name!, state: s.state ?? '', startedAt: s.startedAt ?? 0 }));
+        .map((s) => ({
+          id: s.id!, sessionId: s.sessionId!, name: s.name!, state: s.state ?? '', startedAt: s.startedAt ?? 0,
+          ...(s.status ? { status: s.status } : {}),
+        }));
     },
 
     async readResult(sessionId) {
@@ -115,7 +120,16 @@ export function reviewTarget(name: string, repos: readonly string[]): { owner: s
 }
 
 /** States of a session that is over. */
-export const FINISHED = new Set(['done', 'failed', 'stopped', 'killed', 'cancelled', 'error']);
+const FINISHED = new Set(['done', 'failed', 'stopped', 'killed', 'cancelled', 'error']);
+
+/**
+ * Whether a background session is over. The CLI's `state` can stay "working" after the last
+ * turn ended (seen with `status: "idle"`): nothing runs any more, so it is over too. An idle
+ * session "waiting" for the user is not.
+ */
+export function isOver(s: Pick<BackgroundSession, 'state' | 'status'>): boolean {
+  return FINISHED.has(s.state) || (s.status === 'idle' && s.state === 'working');
+}
 
 /**
  * Review sessions of the tracked repositories, from the background sessions: those named by
@@ -129,7 +143,7 @@ export function toReviewSessions(sessions: BackgroundSession[], repos: readonly 
     const key = `${target.owner}/${target.repo}#${target.number}`;
     const seen = latest.get(key);
     if (seen && seen.startedAt >= s.startedAt) continue;
-    latest.set(key, { key, id: s.id, name: s.name, running: !FINISHED.has(s.state), state: s.state, startedAt: s.startedAt });
+    latest.set(key, { key, id: s.id, name: s.name, running: !isOver(s), state: s.state, startedAt: s.startedAt });
   }
   return [...latest.values()];
 }

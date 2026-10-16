@@ -278,7 +278,8 @@ describe('API', () => {
       expect((await send('GET', '/reviews/r1/result')).body.findings[0]).toMatchObject({ title: 'Bug', editing: true });
       expect((await send('POST', '/reviews/r1/findings/1/reject')).status).toBe(409);
 
-      sessions[1]!.state = 'done';
+      // The CLI may keep "working" once the last turn ended: idle, it is over all the same.
+      sessions[1]!.status = 'idle';
       expect((await send('GET', '/reviews/r1/result')).body.findings[0]).toMatchObject({
         title: 'Shorter bug', body: 'Short.', easySummary: 'Plus court.', edited: true, editing: false, decision: null,
       });

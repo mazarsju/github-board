@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  claudeCli, isLoopback, lastAnswer, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
+  claudeCli, isLoopback, isOver, lastAnswer, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
 } from '../src/claude.ts';
 
 let dir = '';
@@ -51,11 +51,13 @@ cat <<'JSON'
 [
   { "name": "my terminal", "status": "idle", "cwd": "/x", "kind": "interactive", "startedAt": 1 },
   { "id": "dd52f6fd", "sessionId": "dd52f6fd-uuid", "name": "review service-clm#7", "state": "done", "kind": "background", "startedAt": 2, "cwd": "/x" },
+  { "id": "c47f7202", "sessionId": "c47f-uuid", "name": "edit service-clm#7 finding 1", "state": "working", "status": "idle", "kind": "background", "startedAt": 3 },
   { "id": "broken", "kind": "background" }
 ]
 JSON`);
     expect(await claudeCli({ bin }).listBackground()).toEqual([
       { id: 'dd52f6fd', sessionId: 'dd52f6fd-uuid', name: 'review service-clm#7', state: 'done', startedAt: 2 },
+      { id: 'c47f7202', sessionId: 'c47f-uuid', name: 'edit service-clm#7 finding 1', state: 'working', status: 'idle', startedAt: 3 },
     ]);
   });
 
@@ -115,6 +117,15 @@ describe('review sessions', () => {
       { key: 'DiliTrust/webapp-clm#5', id: 'f', name: 'review webapp-clm#5', running: false, state: 'failed', startedAt: 2 },
     ]);
   });
+});
+
+test('isOver: finished states, and a session still "working" although its last turn ended', () => {
+  expect(isOver({ state: 'done' })).toBe(true);
+  expect(isOver({ state: 'failed', status: 'idle' })).toBe(true);
+  expect(isOver({ state: 'working', status: 'idle' })).toBe(true); // reported by the CLI after the last turn
+  expect(isOver({ state: 'working', status: 'busy' })).toBe(false);
+  expect(isOver({ state: 'working' })).toBe(false);
+  expect(isOver({ state: 'waiting', status: 'idle' })).toBe(false); // waits for the user
 });
 
 test('isLoopback accepts only this machine', () => {

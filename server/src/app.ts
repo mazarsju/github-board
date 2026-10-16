@@ -8,7 +8,7 @@ import { REPOS } from '../../shared/config.ts';
 import { appStateSchema } from '../../shared/schema.ts';
 import type { ReviewFinding, SessionInfo } from '../../shared/types.ts';
 import {
-  claudeCli, FINISHED, isLoopback, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession, type ClaudeCli,
+  claudeCli, isLoopback, isOver, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession, type ClaudeCli,
 } from './claude.ts';
 import { excerpt, GitHubClient, GitHubError } from './github.ts';
 import {
@@ -202,7 +202,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     return Promise.all(saved.findings.map(async (f) => {
       if (!f.editSession) return { ...f, editing: false };
       const s = sessions.find((x) => x.id === f.editSession);
-      if (s && !FINISHED.has(s.state)) return { ...f, editing: true };
+      if (s && !isOver(s)) return { ...f, editing: true };
       const edit = s && /^[\w-]+$/.test(s.sessionId) ? parseEdit(await claude.readResult(s.sessionId)) : null;
       const editError = edit ? null : 'Claude did not return an edited finding.';
       await skills.updateFinding(target, f.id, { ...edit, edited: edit ? true : undefined, edit_session: undefined, edit_error: editError ?? undefined });
