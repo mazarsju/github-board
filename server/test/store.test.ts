@@ -14,17 +14,17 @@ test('JsonFileStore persists the state per user', async () => {
   const store = new JsonFileStore(file);
 
   expect(await store.get('alice')).toEqual(defaultState()); // missing file → defaults
-  await store.set('alice', { settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'] } });
+  await store.set('alice', { settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'], dismissedReviews: ['r1'] } });
   await store.set('bob', defaultState());
 
   const raw = JSON.parse(await readFile(file, 'utf8'));
   expect(Object.keys(raw.users)).toEqual(['alice', 'bob']);
-  expect(await new JsonFileStore(file).get('alice')).toEqual({ settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'] } });
+  expect(await new JsonFileStore(file).get('alice')).toEqual({ settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'], dismissedReviews: ['r1'] } });
 });
 
 test('JsonFileStore reads files written by the old board version', async () => {
   dir = await mkdtemp(join(tmpdir(), 'gb-'));
   const file = join(dir, 'state.json');
   await writeFile(file, JSON.stringify({ users: { alice: { boards: [], prs: { 'o/r#1': { pinned: true } }, settings: { refresh: 900, theme: 'light', compact: true } } } }));
-  expect(await new JsonFileStore(file).get('alice')).toEqual({ settings: { refresh: 900, theme: 'light', collapsed: [] } });
+  expect(await new JsonFileStore(file).get('alice')).toEqual({ settings: { refresh: 900, theme: 'light', collapsed: [], dismissedReviews: [] } });
 });

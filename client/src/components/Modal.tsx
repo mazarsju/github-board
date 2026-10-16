@@ -1,15 +1,16 @@
 import { useEffect, useRef, type FormEvent, type ReactNode } from 'react';
 
-/** Dialogue natif <dialog> modal, affiché tant que le composant est monté. */
-export function Modal({ title, subtitle, onClose, onSubmit, children, footer, cancelLabel = 'Annuler' }: {
+/** Native modal <dialog>, shown while the component is mounted. Without `onSubmit`, it only has a close button. */
+export function Modal({ title, subtitle, onClose, onSubmit, children, footer, cancelLabel = 'Annuler', className }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
-  onSubmit: () => void;
+  onSubmit?: () => void;
   children: ReactNode;
-  /** Boutons à gauche du pied (ex. Supprimer). */
+  /** Buttons on the left of the footer (e.g. Delete). */
   footer?: ReactNode;
   cancelLabel?: string;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -20,11 +21,11 @@ export function Modal({ title, subtitle, onClose, onSubmit, children, footer, ca
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit();
+    onSubmit?.();
   };
 
   return (
-    <dialog ref={ref} onCancel={(e) => { e.preventDefault(); onClose(); }} aria-label={title}>
+    <dialog ref={ref} className={className} onCancel={(e) => { e.preventDefault(); onClose(); }} aria-label={title}>
       <form className="dialog-form" onSubmit={submit}>
         <h2>{title}</h2>
         {subtitle && <p className="muted">{subtitle}</p>}
@@ -33,7 +34,7 @@ export function Modal({ title, subtitle, onClose, onSubmit, children, footer, ca
           {footer}
           <span className="spacer" />
           <button type="button" className="btn" onClick={onClose}>{cancelLabel}</button>
-          <button type="submit" className="btn primary">Enregistrer</button>
+          {onSubmit && <button type="submit" className="btn primary">Enregistrer</button>}
         </menu>
       </form>
     </dialog>

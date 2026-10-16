@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { REPOS } from '../../shared/config.ts';
 import { appStateSchema } from '../../shared/schema.ts';
 import type { SessionInfo } from '../../shared/types.ts';
+import { claudeCli, isLoopback, reviewName, toReviewSessions, type ClaudeCli } from './claude.ts';
 import { GitHubClient, GitHubError } from './github.ts';
 import type { StateStore } from './store.ts';
 
@@ -18,6 +19,8 @@ export interface AppOptions {
   createClient?: (token: string) => GitHubClient;
   /** Folder of the built frontend to serve (production). */
   staticDir?: string;
+  /** Local Claude Code CLI for the "Review" button (replaceable in tests). */
+  claude?: ClaudeCli;
 }
 
 interface Session {
@@ -27,6 +30,20 @@ interface Session {
 }
 
 const COOKIE = 'gb_session';
+/** Skill run by the "Review" button. POC: a placeholder until the PR review skill exists. */
+export const REVIEW_PROMPT = '/standup';
+/**
+ * Header the app sends to the review routes. Another website cannot add it to a request
+ * to this server without a CORS preflight, which is not granted: this blocks cross-site
+ * requests even without a session cookie (GITHUB_TOKEN mode).
+ */
+export const REVIEW_HEADER = 'x-github-board';
+
+const pullParams = z.object({
+  owner: z.string().regex(/^[\w.-]+$/),
+  repo: z.string().regex(/^[\w.-]+$/),
+  number: z.coerce.number().int().positive(),
+});
 
 const pullsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(100),
@@ -40,7 +57,7 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-export function createApp({ store, envToken, createClient = (t) => new GitHubClient(t), staticDir }: AppOptions) {
+export function createApp({ store, envToken, createClient = (t) => new GitHubClient(t), staticDir, claude = claudeCli() }: AppOptions) {
   const app = express();
   const sessions = new Map<string, Session>(); // session id (cookie) → session
   let envSession: Promise<Session> | null = null;
@@ -122,13 +139,50 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   });
 
   api.get('/pulls/:owner/:repo/:number/details', async (req, res) => {
-    const { owner, repo, number } = z.object({
-      owner: z.string().regex(/^[\w.-]+$/),
-      repo: z.string().regex(/^[\w.-]+$/),
-      number: z.coerce.number().int().positive(),
-    }).parse(req.params);
+    const { owner, repo, number } = pullParams.parse(req.params);
     const updatedAt = typeof req.query.updatedAt === 'string' ? req.query.updatedAt : '';
     res.json(await session(res).client.getDetails(owner, repo, number, updatedAt));
+  });
+
+  // The review routes run the Claude CLI or read its files on this machine: only for
+  // requests from this machine, sent by the app itself.
+  const localOnly = (req: Request, res: Response, next: NextFunction) => {
+    if (isLoopback(req.socket.remoteAddress) && req.get(REVIEW_HEADER) === '1') return next();
+    res.status(403).json({ error: 'Review possible uniquement depuis l’app, sur la machine du serveur.' });
+  };
+  const claudeError = (res: Response, action: string, err: unknown) =>
+    res.status(500).json({ error: `${action} : ${(err as Error).message}` });
+
+  api.post('/pulls/:owner/:repo/:number/review', localOnly, async (req, res) => {
+    const { repo, number } = pullParams.parse(req.params);
+    const name = reviewName(repo, number);
+    try {
+      const output = await claude.startBackground(REVIEW_PROMPT, name);
+      res.json({ name, output });
+    } catch (err) {
+      claudeError(res, 'Lancement de Claude impossible', err);
+    }
+  });
+
+  api.get('/reviews', localOnly, async (_req, res) => {
+    try {
+      res.json(toReviewSessions(await claude.listBackground(), REPOS));
+    } catch (err) {
+      claudeError(res, 'Sessions Claude illisibles', err);
+    }
+  });
+
+  api.get('/reviews/:id/result', localOnly, async (req, res) => {
+    const { id } = z.object({ id: z.string().regex(/^[\w-]+$/) }).parse(req.params);
+    try {
+      // The transcript is found from the CLI's own listing, never from a client-provided path.
+      const session = (await claude.listBackground()).find((s) => s.id === id);
+      const text = session && /^[\w-]+$/.test(session.sessionId) ? await claude.readResult(session.sessionId) : null;
+      if (text === null) return void res.status(404).json({ error: 'Aucun résultat pour cette session.' });
+      res.json({ text });
+    } catch (err) {
+      claudeError(res, 'Résultat illisible', err);
+    }
   });
 
   api.get('/rate', (_req, res) => {

@@ -1,17 +1,20 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 
-const Ctx = createContext<(msg: string) => void>(() => {});
+/** Shows `msg` for `ms` milliseconds. */
+type Toast = (msg: string, ms?: number) => void;
+
+const Ctx = createContext<Toast>(() => {});
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [msg, setMsg] = useState('');
   const [show, setShow] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const toast = useCallback((m: string) => {
+  const toast = useCallback<Toast>((m, ms = 2600) => {
     setMsg(m);
     setShow(true);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setShow(false), 2600);
+    timer.current = setTimeout(() => setShow(false), ms);
   }, []);
 
   return (

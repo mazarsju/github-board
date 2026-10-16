@@ -27,7 +27,10 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
     void queryClient.invalidateQueries({ queryKey: ['rate'] });
   }, [fetching, queryClient]);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['pulls'] });
+  const refresh = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['pulls'] }),
+    queryClient.invalidateQueries({ queryKey: ['reviews'] }),
+  ]);
 
   // Shortcuts: `/` filter, `r` refresh.
   useEffect(() => {

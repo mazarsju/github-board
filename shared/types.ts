@@ -8,6 +8,8 @@ export interface Settings {
   theme: Theme;
   /** Repositories ("owner/repo") whose group is collapsed in the list. */
   collapsed: string[];
+  /** Ids of finished review sessions whose synthesis was marked as read. */
+  dismissedReviews: string[];
 }
 
 /** Personal state of a user, persisted by the backend. */
@@ -73,6 +75,20 @@ export interface MyAction {
   approved: boolean;
   /** Discussions whose last word is someone else's: unresolved review threads, plus the conversation. */
   unanswered: number;
+}
+
+/** Background Claude Code session started by the "Review" button, latest one per PR. */
+export interface ReviewSession {
+  /** PR key, "owner/repo#number". */
+  key: string;
+  /** Id taken by `claude attach`. */
+  id: string;
+  /** Session name, `review <repo>#<number>`; also accepted by `claude attach`. */
+  name: string;
+  running: boolean;
+  /** Raw state from the CLI (working, waiting, done…). */
+  state: string;
+  startedAt: number;
 }
 
 /** Status of a PR in the list, from most to least blocking. */

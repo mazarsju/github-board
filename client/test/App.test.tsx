@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { defaultState } from '../../shared/state.ts';
-import type { AppState, MyAction, PrDetails, PullRequest } from '../../shared/types.ts';
+import type { AppState, MyAction, PrDetails, PullRequest, ReviewSession } from '../../shared/types.ts';
 import { App } from '../src/App.tsx';
 import { ToastProvider } from '../src/components/Toast.tsx';
 
@@ -41,6 +41,11 @@ let loggedIn: boolean;
 let saved: AppState[];
 let initialState: AppState;
 let actions: MyAction[];
+let reviews: ReviewSession[];
+
+const session = (key: string, id: string, running: boolean): ReviewSession => ({
+  key, id, name: `review ${key.split('/')[1]}`, running, state: running ? 'working' : 'done', startedAt: 1,
+});
 
 /** Mocked backend: the /api routes used by the app. */
 function mockBackend() {
@@ -66,6 +71,13 @@ function mockBackend() {
       ]);
       case '/api/pulls': return json(200, { total: PRS.length, items: PRS });
       case '/api/actions': return json(200, actions);
+      case '/api/pulls/DiliTrust/service-clm/2/review':
+        if (init.method !== 'POST' || new Headers(init.headers).get('X-Github-Board') !== '1') return json(403, { error: 'Refusé' });
+        reviews = [session('DiliTrust/service-clm#2', 'started', true)];
+        return json(200, { name: 'review service-clm#2', output: 'abc' });
+      case '/api/reviews': return json(200, reviews);
+      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">' });
+      case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Lancement de Claude impossible : Not logged in' });
       default: {
         const m = /^\/api\/pulls\/DiliTrust\/([\w-]+)\/(\d+)\/details$/.exec(url.pathname);
         if (m) return json(200, { ...DETAILS, ...DETAILS_BY_PR[`${m[1]}#${m[2]}`] });
@@ -85,7 +97,7 @@ const row = async (title: string) => {
   return (await within(list).findByRole('link', { name: title })).closest('tr')!;
 };
 
-beforeEach(() => { loggedIn = false; saved = []; initialState = defaultState(); actions = []; mockBackend(); });
+beforeEach(() => { loggedIn = false; saved = []; initialState = defaultState(); actions = []; reviews = []; mockBackend(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 test('logs in, then shows the PR list and the inaccessible repositories', async () => {
@@ -240,6 +252,69 @@ test('"Actions pour moi" is a quiet line when nothing waits, and follows the fil
   expect(screen.getByText('Actions pour moi : rien en attente ✓')).toBeInTheDocument();
 });
 
+test('the "Review" button of a list row starts a background Claude session', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0 }];
+  renderApp();
+
+  await user.click(within(await row('Refonte service')).getByRole('button', { name: 'Review avec Claude : service-clm#2' }));
+  expect(await screen.findByText('Session Claude lancée en arrière-plan. Pour la suivre : claude attach "review service-clm#2"')).toBeInTheDocument();
+  // The sessions are checked again at once: the row now shows the running session.
+  expect(await within(await row('Refonte service')).findByRole('button', { name: 'Review en cours : ouvrir la session' })).toBeInTheDocument();
+
+  await user.click(within(await row('PR de webapp-clm')).getByRole('button', { name: /Review avec Claude/ }));
+  expect(await screen.findByText('Lancement de Claude impossible : Not logged in')).toBeInTheDocument();
+
+  // Only in the project list, not in "Actions pour moi".
+  const section = screen.getByRole('region', { name: 'Actions pour moi' });
+  expect(within(section).queryByRole('button', { name: /Review avec Claude/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /Review avec Claude/ })).toHaveLength(PRS.length - 1); // one is running
+});
+
+test('a running review replaces the Review button with one telling how to open the session', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  reviews = [session('DiliTrust/service-clm#2', 'r1', true)];
+  renderApp();
+
+  const running = await within(await row('Refonte service')).findByRole('button', { name: 'Review en cours : ouvrir la session' });
+  expect(within(await row('Refonte service')).queryByRole('button', { name: /Review avec Claude/ })).not.toBeInTheDocument();
+  await user.click(running);
+  const dialog = await screen.findByRole('dialog', { name: 'Review en cours' });
+  expect(within(dialog).getByText('claude attach "review service-clm#2"')).toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: 'Copier' })).toBeInTheDocument();
+  // Running sessions are not in "Actions pour moi" yet.
+  expect(screen.queryByRole('button', { name: 'Synthèse review' })).not.toBeInTheDocument();
+});
+
+test('a finished review shows its synthesis in "Actions pour moi" until marked as read', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  reviews = [session('DiliTrust/DT_Public_API#1', 'r2', false)];
+  renderApp();
+
+  const section = await screen.findByRole('region', { name: 'Actions pour moi' });
+  const entry = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
+  await user.click(within(entry).getByRole('button', { name: 'Synthèse review' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Synthèse review' });
+  // Rendered as Markdown; raw HTML is not.
+  expect(await within(dialog).findByRole('heading', { name: 'Verdict' })).toBeInTheDocument();
+  expect(within(dialog).getByText('Rien de bloquant.').tagName).toBe('STRONG');
+  expect(within(dialog).getByRole('listitem')).toHaveTextContent('Deux remarques mineures');
+  expect(within(dialog).getByRole('link', { name: 'mineures' })).toHaveAttribute('target', '_blank');
+  expect(dialog.querySelector('img')).toBeNull();
+  expect(within(dialog).getByText('claude attach r2')).toBeInTheDocument();
+
+  await user.click(within(dialog).getByRole('button', { name: 'Marquer comme lue' }));
+  expect(screen.queryByRole('dialog', { name: 'Synthèse review' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Actions pour moi' })).not.toBeInTheDocument();
+  expect(screen.getByText('Actions pour moi : rien en attente ✓')).toBeInTheDocument();
+  await waitFor(() => expect(saved.at(-1)?.settings.dismissedReviews).toEqual(['r2']));
+  // The PR can be reviewed again.
+  expect(within(await row('PR de DT_Public_API')).getByRole('button', { name: /Review avec Claude/ })).toBeInTheDocument();
+});
+
 test('the filter narrows the list', async () => {
   loggedIn = true;
   const user = userEvent.setup();
@@ -269,6 +344,6 @@ test('settings are saved on the server', async () => {
   await user.selectOptions(within(dialog).getByLabelText('Thème'), 'dark');
   await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
 
-  await waitFor(() => expect(saved.at(-1)).toEqual({ settings: { refresh: 300, theme: 'dark', collapsed: [] } }));
+  await waitFor(() => expect(saved.at(-1)).toEqual({ settings: { refresh: 300, theme: 'dark', collapsed: [], dismissedReviews: [] } }));
   expect(document.documentElement.dataset.theme).toBe('dark');
 });

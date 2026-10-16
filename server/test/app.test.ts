@@ -3,7 +3,8 @@ import type { Server } from 'node:http';
 import { afterEach, describe, expect, test } from 'vitest';
 import { REPOS } from '../../shared/config.ts';
 import { defaultState } from '../../shared/state.ts';
-import { createApp, type AppOptions } from '../src/app.ts';
+import { createApp, REVIEW_PROMPT, type AppOptions } from '../src/app.ts';
+import type { BackgroundSession, ClaudeCli } from '../src/claude.ts';
 import { GitHubClient, GitHubError } from '../src/github.ts';
 import { MemoryStore } from '../src/store.ts';
 
@@ -40,7 +41,7 @@ async function start(opts: Partial<AppOptions> = {}) {
   const call = async (path: string, init: RequestInit = {}) => {
     const res = await fetch(base + path, {
       ...init,
-      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}), ...(init.headers as Record<string, string>) },
     });
     const set = res.headers.get('set-cookie');
     if (set) cookie = set.split(';')[0]!;
@@ -74,10 +75,10 @@ describe('API', () => {
 
     expect((await call('/state')).body).toEqual(defaultState());
 
-    const next = { settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'] } };
+    const next = { settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'], dismissedReviews: [] } };
     expect((await call('/state', { method: 'PUT', body: JSON.stringify(next) })).status).toBe(204);
     expect(await store.get('alice')).toEqual(next);
-    expect((await call('/state', { method: 'PUT', body: JSON.stringify({ settings: { refresh: -1, theme: 'dark', collapsed: [] } }) })).status).toBe(400);
+    expect((await call('/state', { method: 'PUT', body: JSON.stringify({ settings: { refresh: -1, theme: 'dark', collapsed: [], dismissedReviews: [] } }) })).status).toBe(400);
 
     expect((await call('/session', { method: 'DELETE' })).status).toBe(204);
     expect((await call('/state')).status).toBe(401);
@@ -107,6 +108,61 @@ describe('API', () => {
   test('actions: the session user\'s PRs in the tracked repositories', async () => {
     const { call } = await start({ envToken: 'good' });
     expect((await call('/actions')).body).toEqual([{ login: 'alice', repos: REPOS }]);
+  });
+
+  test('review: starts a named background Claude session, only when asked by the app', async () => {
+    const started: [string, string][] = [];
+    const claude: ClaudeCli = {
+      async startBackground(prompt, name) {
+        if (name.includes('#13')) throw new Error('Not logged in');
+        started.push([prompt, name]);
+        return 'abc123';
+      },
+      listBackground: async () => [],
+      readResult: async () => null,
+    };
+    const { call } = await start({ envToken: 'good', claude });
+    const post = (path: string, headers: Record<string, string> = { 'X-Github-Board': '1' }) => call(path, { method: 'POST', headers });
+
+    expect(await post('/pulls/DiliTrust/service-clm/7/review')).toMatchObject({ status: 200, body: { name: 'review service-clm#7', output: 'abc123' } });
+    expect(started).toEqual([[REVIEW_PROMPT, 'review service-clm#7']]);
+    // Without the app's header (e.g. a request from another website): refused, nothing started.
+    expect((await post('/pulls/DiliTrust/service-clm/7/review', {})).status).toBe(403);
+    expect((await post('/pulls/o/r;rm/7/review')).status).toBe(400);
+    expect(await post('/pulls/o/r/13/review')).toMatchObject({ status: 500, body: { error: 'Lancement de Claude impossible : Not logged in' } });
+    expect(started).toHaveLength(1);
+  });
+
+  test('reviews: sessions of the tracked repositories, and the result of a finished one', async () => {
+    const sessions: BackgroundSession[] = [
+      { id: 'a1', sessionId: 'uuid-1', name: 'review service-clm#7', state: 'working', startedAt: 2 },
+      { id: 'a0', sessionId: 'uuid-0', name: 'review service-clm#7', state: 'done', startedAt: 1 },
+      { id: 'b1', sessionId: 'uuid-2', name: 'review webapp-clm#3', state: 'done', startedAt: 1 },
+      { id: 'c1', sessionId: 'uuid-3', name: 'something else', state: 'done', startedAt: 1 },
+      { id: 'd1', sessionId: '../../etc/passwd', name: 'review webapp-clm#4', state: 'done', startedAt: 1 },
+    ];
+    const read: string[] = [];
+    const claude: ClaudeCli = {
+      startBackground: async () => '',
+      listBackground: async () => sessions,
+      readResult: async (sessionId) => { read.push(sessionId); return sessionId === 'uuid-2' ? 'LGTM' : null; },
+    };
+    const { call } = await start({ envToken: 'good', claude });
+    const get = (path: string, headers: Record<string, string> = { 'X-Github-Board': '1' }) => call(path, { headers });
+
+    expect((await get('/reviews')).body).toEqual([
+      { key: 'DiliTrust/service-clm#7', id: 'a1', name: 'review service-clm#7', running: true, state: 'working', startedAt: 2 },
+      { key: 'DiliTrust/webapp-clm#3', id: 'b1', name: 'review webapp-clm#3', running: false, state: 'done', startedAt: 1 },
+      { key: 'DiliTrust/webapp-clm#4', id: 'd1', name: 'review webapp-clm#4', running: false, state: 'done', startedAt: 1 },
+    ]);
+    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: { text: 'LGTM' } });
+    expect((await get('/reviews/a1/result')).status).toBe(404); // no answer yet
+    expect((await get('/reviews/zz/result')).status).toBe(404); // unknown session
+    // A transcript id that is not a plain id is never turned into a path.
+    expect((await get('/reviews/d1/result')).status).toBe(404);
+    expect(read).toEqual(['uuid-2', 'uuid-1']);
+    expect((await get('/reviews', {})).status).toBe(403);
+    expect((await get('/reviews/b1/result', {})).status).toBe(403);
   });
 
   test('details: parameters are validated', async () => {

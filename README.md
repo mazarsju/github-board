@@ -11,7 +11,7 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
   - **À merger**: the PR reached the required approvals
   - **N commentaire(s) sans réponse**: unresolved review threads whose last comment is someone else's, plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
 
-  These PRs also stay in their project below.
+  These PRs also stay in their project below. Finished reviews (see "Review with Claude") are listed here too.
 - **PR list**, grouped by project under a separator (in the order of `REPOS`, with the number of PRs; projects without open PRs are hidden), newest first within each project. Click a separator to **collapse / expand** its project; the choice is saved with your settings, and a collapsed project does not load its PRs' details. One row per PR with:
   - title (link to GitHub) and number
   - author
@@ -20,6 +20,9 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
   - status, the most blocking one winning: **CI FAILED** (a check or commit status of the last commit failed — failed, timed out, cancelled, action required; only the latest run of each check counts, so a successful re-run clears an earlier failure) › **Draft** › **Conflit** (merge conflict) › **Changements demandés** › **Approuvée** (required approvals reached) › **Review en attente**
   - change size (`+added −deleted` lines; number of files on hover)
 - **Stacked PRs** are kept together: a PR whose base branch is the branch of another open PR of the same project is listed right under it, indented (↳, with the parent PR on hover), and the first PR of the stack shows `stack · N`. A stack is placed where its newest PR would be; a PR with several stacked PRs forms a tree, oldest child first.
+- **Review with Claude** (✦ button at the end of each row of the project list): starts a **background Claude Code session** on the server's machine, named `review <project>#<number>`. *Proof of concept: the session runs the `/standup` skill for now, to be replaced by a PR review skill.*
+  - **While it runs**, the ✦ button pulses (yellow when the session waits for an answer); clicking it shows the command that opens the session in a terminal, `claude attach "review service-clm#16664"`, with a copy button. Sessions are checked every 5 seconds while one runs.
+  - **Once finished**, "Actions pour moi" lists the PR with a **Synthèse review** button showing the session's final answer full screen, rendered as Markdown (GitHub flavor: tables, checklists; raw HTML is ignored, links open in a new tab), and the command to resume the conversation, `claude attach <session id>` (a finished session is no longer found by its name). **Marquer comme lue** removes it (saved with your settings); the PR can then be reviewed again.
 - Instant filter on title, project, number and author
 - Auto refresh, API quota counter, light/dark theme
 - Shortcuts: `/` filter, `r` refresh
@@ -58,7 +61,9 @@ yarn start   # the backend serves the API and the built frontend on http://127.0
 | --- | --- | --- |
 | `GITHUB_TOKEN` | — | Token used by the server. When set, no login is asked (for local use only: anyone reaching the server uses it). |
 | `HOST` / `PORT` | `127.0.0.1` / `3001` | Backend listen address. |
-| `DATA_FILE` | `server/data/state.json` | JSON file of each GitHub user's settings (theme, refresh interval, collapsed projects). |
+| `CLAUDE_BIN` | `claude` | Claude Code executable started by the Review button (full path if it is not in the server's `PATH`). |
+| `CLAUDE_CWD` | server's folder | Folder in which Review sessions start. |
+| `DATA_FILE` | `server/data/state.json` | JSON file of each GitHub user's settings (theme, refresh interval, collapsed projects, reviews marked as read). |
 
 ### Token
 
@@ -84,6 +89,7 @@ server/
   src/app.ts         Express REST API (/api) + serving of the built frontend
   src/github.ts      GitHub client: REST (open PRs, PR details, repository access, quota), GraphQL (actions for me)
   src/store.ts       Per-user JSON persistence of the settings
+  src/claude.ts      Local Claude Code CLI: starts, lists and reads the review sessions
   test/              Backend tests
 client/
   index.html, vite.config.ts
@@ -103,6 +109,9 @@ client/
 | `GET /api/pulls?limit=` | Open PRs of the tracked repositories with their base and head branches, newest first (`limit` newest, default 100) |
 | `GET /api/pulls/:owner/:repo/:number/details?updatedAt=` | Reviews (decision and approval count), diff size, mergeability and CI state of a PR (cached) |
 | `GET /api/actions` | The logged-in user's open PRs waiting for them (approved, or with unanswered discussions), via GraphQL |
+| `POST /api/pulls/:owner/:repo/:number/review` | Starts a background Claude Code session (`claude --bg`) on the server's machine; requires the `X-Github-Board: 1` header and a request from that machine |
+| `GET /api/reviews` | Review sessions of the tracked repositories (latest per PR, running or finished), from `claude agents --json --all`; same restrictions |
+| `GET /api/reviews/:id/result` | Final answer of a finished review session, read from its transcript; same restrictions |
 | `GET /api/repos/access` | Token access to the tracked repositories |
 | `GET /api/rate` | Remaining GitHub quota |
 
@@ -127,6 +136,8 @@ The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every
 - Approvals, status and size cost 4 GitHub API calls per PR (PR, reviews, check runs, commit statuses), cached until the PR changes.
 - A CI finishing does not change the PR itself: while a PR's CI is running, its details are fetched again at each refresh (auto refresh interval), so a failure shows up at the latest one refresh later.
 - GitHub computes mergeability lazily: right after a push, a conflict may only show up after a few seconds (the app checks again automatically).
+- Review: Claude Code must be installed and logged in on the server's machine, and must trust the folder the sessions start in (`CLAUDE_CWD`, by default the server's folder): run `claude` once in that folder and accept, otherwise the button reports "workspace not trusted". The button only works when the browser and the server run on the same machine; the server runs a fixed command (`claude --bg --name … /standup`, no shell) and does not pass its GitHub token to Claude.
+- A review's synthesis is read from the session's transcript in `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR/projects/`), an internal Claude Code format that may change; `claude logs` cannot be used since it stops working once the session is stopped. Only sessions whose PR is in the list (the 100 newest open PRs) are shown.
 - Sessions are kept in memory: restarting the server logs users out (except with `GITHUB_TOKEN`).
 - The app now needs a Node server: it can no longer be published on GitHub Pages.
 - If the state is changed from two tabs at the same time, the last save wins.

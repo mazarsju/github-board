@@ -3,7 +3,7 @@ import { REPOS, REQUIRED_APPROVALS } from './config.ts';
 import type { AppState, PrDetails, PrStatus, PullRequest, Settings, StackedPr } from './types.ts';
 
 export function defaultState(): AppState {
-  return { settings: { refresh: 300, theme: 'auto', collapsed: [] } };
+  return { settings: { refresh: 300, theme: 'auto', collapsed: [], dismissedReviews: [] } };
 }
 
 /**
@@ -12,8 +12,10 @@ export function defaultState(): AppState {
  */
 export function migrate(data: { settings?: Partial<Settings> }): AppState {
   const base = defaultState().settings;
-  const { refresh = base.refresh, theme = base.theme, collapsed = base.collapsed } = data.settings ?? {};
-  return { settings: { refresh, theme, collapsed } };
+  const {
+    refresh = base.refresh, theme = base.theme, collapsed = base.collapsed, dismissedReviews = base.dismissedReviews,
+  } = data.settings ?? {};
+  return { settings: { refresh, theme, collapsed, dismissedReviews } };
 }
 
 /** Collapses or expands the group of a repository in the list. */

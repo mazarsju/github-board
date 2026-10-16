@@ -9,13 +9,14 @@ Github Board is a webapp listing the open GitHub pull requests of a few tracked 
 - `shared/` — code used by both sides (imported with relative paths and `.ts` extensions)
   - `config.ts` — tracked GitHub repositories (`REPOS`); edit this list to add/remove a repo. Also `REQUIRED_APPROVALS` (approvals needed to merge, used by the list view's status)
   - `types.ts`, `state.ts` (pure logic: default settings, migration, filter, grouping by repo, stacked PRs, PR status), `schema.ts` (zod validation)
-- `server/src/` — `index.ts` (entry, env vars), `app.ts` (Express routes), `github.ts` (GitHub client), `store.ts` (JSON persistence)
-- `client/src/` — `App.tsx`, `components/` (`PrList.tsx` list view, `PrRow.tsx` table row, `MyActions.tsx` "Actions pour moi", `Dashboard.tsx` top bar, dialogs, login), `state/` (settings context + debounced save), `lib/` (backend API client, formatting)
+- `server/src/` — `index.ts` (entry, env vars), `app.ts` (Express routes), `github.ts` (GitHub client), `store.ts` (JSON persistence), `claude.ts` (local Claude Code CLI: starts, lists and reads review sessions)
+- `client/src/` — `App.tsx`, `components/` (`PrList.tsx` list view, `PrRow.tsx` table row, `MyActions.tsx` "Actions pour moi", `ReviewDialogs.tsx` review session dialogs, `Dashboard.tsx` top bar, dialogs, login), `state/` (settings context + debounced save), `lib/` (backend API client, formatting)
 - Tests: `shared/*.test.ts`, `server/test/`, `client/test/` (Vitest, Testing Library)
 
 Conventions:
 - Node runs the backend's TypeScript **natively** (type stripping, Node ≥ 22.18): no build step for the server. Only erasable TS syntax is allowed (`erasableSyntaxOnly`: no enums, namespaces or constructor parameter properties), and relative imports must end in `.ts`/`.tsx`.
 - The GitHub token must never reach the browser; all GitHub calls go through the backend.
+- The review routes (`/api/pulls/…/review`, `/api/reviews…`) run the local Claude CLI or read its files: keep commands fixed (`execFile`, no shell, no user-provided arguments beyond validated PR identifiers), never build a file path from client input (session ids come from the CLI's own listing), keep them behind the `localOnly` guard (loopback requests carrying the `X-Github-Board` header), and never pass the GitHub token to the child process.
 - Use Yarn (`yarn.lock`).
 - **Language: English only.** All code (identifiers, comments, log and error messages), the README and every other Markdown documentation file must be written in English. When touching existing French code comments or docs, translate them to English. User-facing UI text stays in French.
 

@@ -1,6 +1,6 @@
 // HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
-  AppState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, SessionInfo,
+  AppState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewSession, SessionInfo,
 } from '../../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -27,6 +27,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
+
+/** Required by the server on the review routes: a request from another website cannot carry it. */
+const LOCAL = { 'X-Github-Board': '1' };
 
 /** Limits the number of concurrent requests (PR details: 4 GitHub calls each). */
 function limiter(max: number) {
@@ -65,6 +68,15 @@ export const api = {
   actions: () => request<MyAction[]>('/actions'),
   /** Open PRs of the tracked repositories, newest first. */
   pulls: (limit: number) => request<PullList>(`/pulls?${new URLSearchParams({ limit: String(limit) })}`),
+  /** Starts a background Claude Code session reviewing `pr` on the server's machine. */
+  review: (pr: PullRequest) => request<{ name: string; output: string }>(`/pulls/${pr.owner}/${pr.repo}/${pr.number}/review`, {
+    method: 'POST',
+    headers: LOCAL,
+  }),
+  /** Review sessions of the tracked repositories, latest one per PR. */
+  reviews: () => request<ReviewSession[]>('/reviews', { headers: LOCAL }),
+  /** Final answer of a finished review session. */
+  reviewResult: (id: string) => request<{ text: string }>(`/reviews/${encodeURIComponent(id)}/result`, { headers: LOCAL }),
   details: (pr: PullRequest) => detailsLimit(() =>
     request<PrDetails>(`/pulls/${pr.owner}/${pr.repo}/${pr.number}/details?${new URLSearchParams({ updatedAt: pr.updatedAt })}`)),
 };

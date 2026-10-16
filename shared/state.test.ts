@@ -21,12 +21,13 @@ describe('config', () => {
 
 describe('state', () => {
   test('default settings', () => {
-    expect(defaultState()).toEqual({ settings: { refresh: 300, theme: 'auto', collapsed: [] } });
+    expect(defaultState()).toEqual({ settings: { refresh: 300, theme: 'auto', collapsed: [], dismissedReviews: [] } });
   });
 
   test('migrate fills in missing settings', () => {
     expect(migrate({})).toEqual(defaultState());
-    expect(migrate({ settings: { theme: 'dark' } })).toEqual({ settings: { refresh: 300, theme: 'dark', collapsed: [] } });
+    expect(migrate({ settings: { theme: 'dark' } })).toEqual({ settings: { refresh: 300, theme: 'dark', collapsed: [], dismissedReviews: [] } });
+    expect(migrate({ settings: { dismissedReviews: ['r1'] } }).settings.dismissedReviews).toEqual(['r1']);
     expect(migrate({ settings: { collapsed: ['a/b'] } }).settings.collapsed).toEqual(['a/b']);
   });
 
@@ -43,7 +44,7 @@ describe('state', () => {
       boards: [{ id: 'repos', name: 'Dépôts', columns: [] }], activeBoard: 'repos', prs: { 'o/r#1': { pinned: true } },
       seen: {}, reposSeeded: true, settings: { refresh: 60, theme: 'light', details: true, compact: false, view: 'list' },
     };
-    expect(migrate(old as never)).toEqual({ settings: { refresh: 60, theme: 'light', collapsed: [] } });
+    expect(migrate(old as never)).toEqual({ settings: { refresh: 60, theme: 'light', collapsed: [], dismissedReviews: [] } });
   });
 });
 

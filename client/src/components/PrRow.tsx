@@ -1,11 +1,12 @@
 // One row of a PR table: title, author (or action), age, approvals, status and size.
 import { useQuery } from '@tanstack/react-query';
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { REQUIRED_APPROVALS } from '../../../shared/config.ts';
 import { prStatus } from '../../../shared/state.ts';
-import type { PrDetails, PrStatus, StackedPr } from '../../../shared/types.ts';
+import type { PrDetails, PrStatus, PullRequest, ReviewSession, StackedPr } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { age } from '../lib/format.ts';
+import { AttachDialog } from './ReviewDialogs.tsx';
 
 /** Deepest indentation of a stacked PR; deeper levels stay aligned on it. */
 const MAX_INDENT = 6;
@@ -29,12 +30,44 @@ const STATUS: Record<PrStatus, [className: string, label: string]> = {
   pending: ['wait', 'Review en attente'],
 };
 
+/** Small 4-point star, the "Review with Claude" icon. */
+function SparkIcon() {
+  return <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 0l1.8 6.2L16 8l-6.2 1.8L8 16l-1.8-6.2L0 8l6.2-1.8z" /></svg>;
+}
+
+function ReviewButton({ pr, onReview }: { pr: PullRequest; onReview: (pr: PullRequest) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const label = `Review avec Claude : ${pr.repo}#${pr.number}`;
+  return (
+    <button type="button" className={`btn icon${busy ? ' spinning' : ''}`} title={label} aria-label={label} disabled={busy}
+      onClick={() => { setBusy(true); void onReview(pr).finally(() => setBusy(false)); }}>
+      <SparkIcon />
+    </button>
+  );
+}
+
+/** Shown instead of the Review button while the PR's review session runs: tells how to open it. */
+function RunningReviewButton({ review }: { review: ReviewSession }) {
+  const [open, setOpen] = useState(false);
+  const label = review.state === 'waiting' ? 'Review en attente de votre réponse : ouvrir la session' : 'Review en cours : ouvrir la session';
+  return (
+    <>
+      <button type="button" className={`btn icon running${review.state === 'waiting' ? ' waiting' : ''}`} title={label} aria-label={label} onClick={() => setOpen(true)}>
+        <SparkIcon />
+      </button>
+      {open && <AttachDialog review={review} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
 /**
  * One PR row. With `action`, the row belongs to "Actions pour moi": the action replaces the
- * author (always the user) and the project name precedes the title.
+ * author (always the user) and the project name precedes the title. With `onReview`, a last
+ * cell holds the "Review" button, replaced by a "running" button while `review` runs.
  */
-export function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd = false, refresh, action }: {
+export function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd = false, refresh, action, onReview, review }: {
   row: StackedPr; stackEnd?: boolean; refresh: number; action?: ReactNode;
+  onReview?: (pr: PullRequest) => Promise<void>; review?: ReviewSession;
 }) {
   const { data: d, error } = useQuery({
     queryKey: ['details', pr.key, pr.updatedAt],
@@ -70,6 +103,11 @@ export function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd = fa
       <td className="num diff" title={d ? `${d.changedFiles} fichier(s)` : undefined}>
         {d ? <><span className="add">+{d.additions}</span> <span className="del">−{d.deletions}</span></> : loading}
       </td>
+      {onReview && (
+        <td className="row-actions">
+          {review?.running ? <RunningReviewButton review={review} /> : <ReviewButton pr={pr} onReview={onReview} />}
+        </td>
+      )}
     </tr>
   );
 }

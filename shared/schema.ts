@@ -6,5 +6,6 @@ export const appStateSchema = z.object({
     refresh: z.number().int().min(0),
     theme: z.enum(['auto', 'light', 'dark']),
     collapsed: z.array(z.string().max(200)).max(100),
+    dismissedReviews: z.array(z.string().max(100)).max(1000),
   }),
 });
