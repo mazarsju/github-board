@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { defaultState } from '../../shared/state.ts';
-import type { AppState, PrDetails, PullRequest } from '../../shared/types.ts';
+import type { AppState, MyAction, PrDetails, PullRequest } from '../../shared/types.ts';
 import { App } from '../src/App.tsx';
 import { ToastProvider } from '../src/components/Toast.tsx';
 
@@ -40,6 +40,7 @@ const DETAILS_BY_PR: Record<string, Partial<PrDetails>> = {
 let loggedIn: boolean;
 let saved: AppState[];
 let initialState: AppState;
+let actions: MyAction[];
 
 /** Mocked backend: the /api routes used by the app. */
 function mockBackend() {
@@ -64,6 +65,7 @@ function mockBackend() {
         { repo: 'DiliTrust/webapp-clm', ok: false, status: 404, error: 'Not Found' },
       ]);
       case '/api/pulls': return json(200, { total: PRS.length, items: PRS });
+      case '/api/actions': return json(200, actions);
       default: {
         const m = /^\/api\/pulls\/DiliTrust\/([\w-]+)\/(\d+)\/details$/.exec(url.pathname);
         if (m) return json(200, { ...DETAILS, ...DETAILS_BY_PR[`${m[1]}#${m[2]}`] });
@@ -83,7 +85,7 @@ const row = async (title: string) => {
   return (await within(list).findByRole('link', { name: title })).closest('tr')!;
 };
 
-beforeEach(() => { loggedIn = false; saved = []; initialState = defaultState(); mockBackend(); });
+beforeEach(() => { loggedIn = false; saved = []; initialState = defaultState(); actions = []; mockBackend(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 test('logs in, then shows the PR list and the inaccessible repositories', async () => {
@@ -200,6 +202,42 @@ test('a group saved as collapsed starts collapsed and does not load its PR detai
   const calls = vi.mocked(fetch).mock.calls.map(([u]) => String(u));
   expect(calls.some((u) => u.includes('/pulls/DiliTrust/service-clm/'))).toBe(false);
   expect(calls.some((u) => u.includes('/pulls/DiliTrust/DT_Public_API/'))).toBe(true);
+});
+
+test('"Actions pour moi" lists the user\'s PRs to merge or with unanswered comments, above the list', async () => {
+  loggedIn = true;
+  actions = [
+    { pr: PRS[1]!, approved: true, unanswered: 0 },
+    { pr: PRS[2]!, approved: false, unanswered: 3 },
+  ];
+  renderApp();
+
+  const section = await screen.findByRole('region', { name: 'Actions pour moi' });
+  expect(within(section).getByRole('heading')).toHaveTextContent('Actions pour moi 2');
+  const toMerge = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
+  expect(within(toMerge).getByText('DT_Public_API')).toBeInTheDocument(); // project before the title
+  expect(within(toMerge).getByText('À merger')).toBeInTheDocument();
+  expect(await within(toMerge).findByText('Approuvée')).toBeInTheDocument();
+  const toAnswer = within(section).getByRole('link', { name: 'PR de webapp-clm' }).closest('tr')!;
+  expect(within(toAnswer).getByText('3 commentaire(s) sans réponse')).toBeInTheDocument();
+  expect(within(toAnswer).queryByText('carol')).not.toBeInTheDocument(); // the action replaces the author
+
+  // Shown before the PR list, which still lists the same PRs in their project.
+  const list = screen.getByRole('region', { name: 'Liste des PRs' });
+  expect(list.firstElementChild).toBe(section);
+  expect(screen.getAllByRole('link', { name: 'PR de DT_Public_API' })).toHaveLength(2);
+});
+
+test('"Actions pour moi" is a quiet line when nothing waits, and follows the filter', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0 }];
+  renderApp();
+
+  await screen.findByRole('region', { name: 'Actions pour moi' });
+  await user.type(screen.getByLabelText('Filtrer'), 'webapp');
+  expect(screen.queryByRole('region', { name: 'Actions pour moi' })).not.toBeInTheDocument();
+  expect(screen.getByText('Actions pour moi : rien en attente ✓')).toBeInTheDocument();
 });
 
 test('the filter narrows the list', async () => {

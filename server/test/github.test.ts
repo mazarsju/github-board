@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { approvalCount, type CheckRun, ciState, GitHubClient, reviewDecision } from '../src/github.ts';
+import {
+  approvalCount, type CheckRun, ciState, GitHubClient, type MyPullNode, reviewDecision, toMyAction, unansweredCount,
+} from '../src/github.ts';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -180,5 +182,75 @@ describe('ciState', () => {
     ] }, null)).toBe('failure');
     // Without any classic status, the combined "pending" state is ignored.
     expect(ciState({ check_runs: [] }, { state: 'pending', statuses: [] })).toBe('none');
+  });
+});
+
+describe('my actions', () => {
+  const user = (login: string) => ({ __typename: 'User', login });
+  const bot = (login: string) => ({ __typename: 'Bot', login });
+  const thread = (last: { __typename: string; login: string }, isResolved = false) => ({ isResolved, comments: { nodes: [{ author: last }] } });
+  const node = (extra: Partial<MyPullNode> = {}): MyPullNode => ({
+    number: 7, title: 'T', url: 'u', isDraft: false, createdAt: 'c', updatedAt: 'u',
+    repository: { nameWithOwner: 'o/r' }, author: { login: 'me', avatarUrl: 'a' },
+    baseRefName: 'develop', headRefName: 'feat', headRepository: { nameWithOwner: 'o/r' },
+    latestOpinionatedReviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] }, reviews: { nodes: [] },
+    ...extra,
+  });
+
+  test('unanswered review threads: unresolved, last comment by another person', () => {
+    expect(unansweredCount(node({ reviewThreads: { nodes: [
+      thread(user('bob')), // waiting for me
+      thread(user('me')), // I answered last
+      thread(user('bob'), true), // resolved
+      thread(bot('coderabbitai')), // bots are ignored
+    ] } }), 'me')).toBe(1);
+  });
+
+  test('the conversation counts once, when its last human message is someone else\'s', () => {
+    const comments = (...msgs: [string, ReturnType<typeof user>][]) => ({ nodes: msgs.map(([createdAt, author]) => ({ createdAt, author })) });
+    expect(unansweredCount(node({ comments: comments(['1', user('me')], ['2', user('bob')], ['3', user('carol')]) }), 'me')).toBe(1);
+    expect(unansweredCount(node({ comments: comments(['1', user('bob')], ['2', user('me')]) }), 'me')).toBe(0);
+    // A bot speaking after me does not reopen the conversation.
+    expect(unansweredCount(node({ comments: comments(['1', user('me')], ['2', bot('coderabbitai')]) }), 'me')).toBe(0);
+    // The text of a "comment" or "changes requested" review is part of the conversation, not an approval's.
+    const review = (state: string, body: string, submittedAt: string) => ({ state, body, submittedAt, author: user('bob') });
+    expect(unansweredCount(node({ comments: comments(['1', user('me')]), reviews: { nodes: [review('CHANGES_REQUESTED', 'Please fix', '2')] } }), 'me')).toBe(1);
+    expect(unansweredCount(node({ comments: comments(['1', user('me')]), reviews: { nodes: [review('APPROVED', 'LGTM', '2')] } }), 'me')).toBe(0);
+    expect(unansweredCount(node({ comments: comments(['1', user('me')]), reviews: { nodes: [review('COMMENTED', '  ', '2')] } }), 'me')).toBe(0);
+  });
+
+  test('toMyAction keeps approved PRs and PRs with unanswered discussions', () => {
+    const approvals = (n: number) => ({ latestOpinionatedReviews: { nodes: Array.from({ length: n }, () => ({ state: 'APPROVED' })) } });
+    expect(toMyAction(node(approvals(1)), 'me')).toBeNull();
+    expect(toMyAction(node({ latestOpinionatedReviews: { nodes: [{ state: 'APPROVED' }, { state: 'CHANGES_REQUESTED' }] } }), 'me')).toBeNull();
+    expect(toMyAction(node(approvals(2)), 'me')).toMatchObject({ approved: true, unanswered: 0 });
+    const action = toMyAction(node({ reviewThreads: { nodes: [thread(user('bob'))] }, headRepository: { nameWithOwner: 'fork/r' } }), 'me');
+    expect(action).toEqual({
+      approved: false, unanswered: 1,
+      pr: {
+        key: 'o/r#7', owner: 'o', repo: 'r', number: 7, title: 'T', url: 'u', draft: false,
+        author: { login: 'me', avatar: 'a' }, baseRef: 'develop', headRef: null, createdAt: 'c', updatedAt: 'u',
+      },
+    });
+  });
+
+  test('myActions searches the user\'s open PRs in the tracked repositories through GraphQL', async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ data: { search: { nodes: [
+      node({ number: 1, latestOpinionatedReviews: { nodes: [{ state: 'APPROVED' }, { state: 'APPROVED' }] } }),
+      node({ number: 2 }), // nothing to do
+      {}, // non-PR search result
+    ] } } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+    const actions = await new GitHubClient('secret').myActions('me', ['o/r', 'o/s']);
+    expect(actions.map((a) => a.pr.key)).toEqual(['o/r#1']);
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('https://api.github.com/graphql');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body)).variables.q).toBe('is:pr is:open author:me sort:updated-desc repo:o/r repo:o/s');
+  });
+
+  test('myActions reports GraphQL errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: 'Bad query' }] }), { status: 200 })));
+    await expect(new GitHubClient('t').myActions('me', ['o/r'])).rejects.toMatchObject({ status: 502, message: 'Bad query' });
   });
 });

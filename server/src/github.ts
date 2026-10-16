@@ -1,5 +1,6 @@
 // GitHub REST API client, used server-side (the token never leaves the backend).
-import type { CiState, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewDecision } from '../../shared/types.ts';
+import { REQUIRED_APPROVALS } from '../../shared/config.ts';
+import type { CiState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewDecision } from '../../shared/types.ts';
 
 const API = 'https://api.github.com';
 /** Pages of 100 PRs read per repository at most. */
@@ -27,14 +28,18 @@ export class GitHubClient {
     this.token = token;
   }
 
-  async request<T>(path: string): Promise<T> {
+  /** GET `path`, or POST `body` as JSON when given. */
+  async request<T>(path: string, body?: unknown): Promise<T> {
     const res = await fetch(API + path, {
+      method: body === undefined ? 'GET' : 'POST',
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${this.token}`,
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'github-board',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     this.trackRate(res);
     if (!res.ok) {
@@ -58,6 +63,27 @@ export class GitHubClient {
       limit: Number(res.headers.get('x-ratelimit-limit')),
       reset: Number(res.headers.get('x-ratelimit-reset')) * 1000,
     };
+  }
+
+  /** GraphQL query; GraphQL errors (answered with HTTP 200) are thrown as a 502. */
+  async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    const res = await this.request<{ data?: T; errors?: { message: string }[] }>('/graphql', { query, variables });
+    if (res.errors?.length || !res.data) throw new GitHubError(res.errors?.map((e) => e.message).join(', ') || 'Empty GraphQL response', 502);
+    return res.data;
+  }
+
+  /**
+   * Open PRs authored by `login` in `repos` that wait for them: approved enough to be merged,
+   * or with discussions they have not answered. Uses GraphQL, the only API telling whether a
+   * review thread is resolved.
+   */
+  async myActions(login: string, repos: readonly string[]): Promise<MyAction[]> {
+    const q = `is:pr is:open author:${login} sort:updated-desc ${repos.map((r) => `repo:${r}`).join(' ')}`;
+    const data = await this.graphql<{ search: { nodes: (MyPullNode | Record<string, never>)[] } }>(MY_PULLS_QUERY, { q });
+    return data.search.nodes
+      .filter((node): node is MyPullNode => 'number' in node)
+      .map((node) => toMyAction(node, login))
+      .filter((action): action is MyAction => !!action);
   }
 
   getUser(): Promise<GitHubUser> {
@@ -203,6 +229,94 @@ export function normalizePull(repo: string, item: PullListItem): PullRequest {
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };
+}
+
+const MY_PULLS_QUERY = `query($q: String!) {
+  search(query: $q, type: ISSUE, first: 100) {
+    nodes {
+      ... on PullRequest {
+        number title url isDraft createdAt updatedAt
+        repository { nameWithOwner }
+        author { login avatarUrl }
+        baseRefName headRefName
+        headRepository { nameWithOwner }
+        latestOpinionatedReviews(first: 100) { nodes { state } }
+        reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { author { __typename login } } } } }
+        comments(last: 100) { nodes { createdAt author { __typename login } } }
+        reviews(last: 100) { nodes { state body submittedAt author { __typename login } } }
+      }
+    }
+  }
+}`;
+
+interface GqlAuthor {
+  __typename?: string;
+  login: string;
+}
+
+export interface MyPullNode {
+  number: number;
+  title: string;
+  url: string;
+  isDraft: boolean;
+  createdAt: string;
+  updatedAt: string;
+  repository: { nameWithOwner: string };
+  author: { login: string; avatarUrl: string } | null;
+  baseRefName: string;
+  headRefName: string;
+  headRepository: { nameWithOwner: string } | null;
+  latestOpinionatedReviews: { nodes: { state: string }[] };
+  reviewThreads: { nodes: { isResolved: boolean; comments: { nodes: { author: GqlAuthor | null }[] } }[] };
+  comments: { nodes: { createdAt: string; author: GqlAuthor | null }[] };
+  reviews: { nodes: { state: string; body: string; submittedAt: string | null; author: GqlAuthor | null }[] };
+}
+
+/** A person other than `me`: bots (CodeRabbit…) and deleted accounts are left out. */
+const isOtherHuman = (a: GqlAuthor | null, me: string): a is GqlAuthor =>
+  !!a && a.__typename !== 'Bot' && !a.login.endsWith('[bot]') && a.login !== me;
+
+/**
+ * Discussions of a PR whose last word is someone else's: each unresolved review thread whose
+ * last comment is not `me`'s, plus 1 when the conversation (PR comments and the text of
+ * "comment" / "changes requested" reviews) ends with someone else's message. Bots are ignored.
+ */
+export function unansweredCount(node: Pick<MyPullNode, 'reviewThreads' | 'comments' | 'reviews'>, me: string): number {
+  const threads = node.reviewThreads.nodes.filter((t) => !t.isResolved && isOtherHuman(t.comments.nodes[0]?.author ?? null, me)).length;
+  const conversation = [
+    ...node.comments.nodes.map((c) => ({ at: c.createdAt, author: c.author })),
+    ...node.reviews.nodes
+      .filter((r) => r.body.trim() && r.submittedAt && (r.state === 'COMMENTED' || r.state === 'CHANGES_REQUESTED'))
+      .map((r) => ({ at: r.submittedAt!, author: r.author })),
+  ]
+    .filter((m) => m.author && m.author.__typename !== 'Bot' && !m.author.login.endsWith('[bot]'))
+    .sort((a, b) => a.at.localeCompare(b.at));
+  const last = conversation.at(-1);
+  return threads + (last && isOtherHuman(last.author, me) ? 1 : 0);
+}
+
+/** The action `me` has to take on their PR, or null when it waits for nobody but reviewers. */
+export function toMyAction(node: MyPullNode, me: string): MyAction | null {
+  const approved = node.latestOpinionatedReviews.nodes.filter((r) => r.state === 'APPROVED').length >= REQUIRED_APPROVALS;
+  const unanswered = unansweredCount(node, me);
+  if (!approved && !unanswered) return null;
+  const repo = node.repository.nameWithOwner;
+  const [owner = '', name = ''] = repo.split('/');
+  const pr: PullRequest = {
+    key: `${repo}#${node.number}`,
+    owner,
+    repo: name,
+    number: node.number,
+    title: node.title,
+    url: node.url,
+    draft: node.isDraft,
+    author: node.author ? { login: node.author.login, avatar: node.author.avatarUrl } : null,
+    baseRef: node.baseRefName,
+    headRef: node.headRepository?.nameWithOwner === repo ? node.headRefName : null,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  };
+  return { pr, approved, unanswered };
 }
 
 /** Latest meaningful review state of each reviewer (comments and pending reviews ignored). */

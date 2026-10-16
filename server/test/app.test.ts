@@ -18,6 +18,9 @@ class FakeClient extends GitHubClient {
   override async checkRepoAccess(repos: readonly string[]) {
     return repos.map((repo) => ({ repo, ok: repo !== 'DiliTrust/webapp-clm', status: 404 }));
   }
+  override async myActions(login: string, repos: readonly string[]) {
+    return [{ login, repos }] as never;
+  }
   override async listOpenPRs(repos: readonly string[], limit: number) {
     if (limit === 13) throw new GitHubError('Server Error', 500);
     return { total: repos.length, items: [] };
@@ -99,6 +102,11 @@ describe('API', () => {
     const { call } = await start({ envToken: 'good' });
     expect((await call('/session')).body).toEqual({ user: { login: 'alice', avatarUrl: 'https://avatar' }, envToken: true });
     expect((await call('/session', { method: 'POST', body: JSON.stringify({ token: 'good' }) })).status).toBe(409);
+  });
+
+  test('actions: the session user\'s PRs in the tracked repositories', async () => {
+    const { call } = await start({ envToken: 'good' });
+    expect((await call('/actions')).body).toEqual([{ login: 'alice', repos: REPOS }]);
   });
 
   test('details: parameters are validated', async () => {

@@ -7,6 +7,11 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
 ## Features
 
 - **Tracked repositories**: defined in [`shared/config.ts`](shared/config.ts) (`REPOS`), currently `DiliTrust/service-clm`, `DiliTrust/DT_Public_API` and `DiliTrust/webapp-clm`. A banner flags any repository the token cannot read.
+- **Actions pour moi**: a highlighted block above the list with your own open PRs that wait for you (a quiet line when there are none):
+  - **À merger**: the PR reached the required approvals
+  - **N commentaire(s) sans réponse**: unresolved review threads whose last comment is someone else's, plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
+
+  These PRs also stay in their project below.
 - **PR list**, grouped by project under a separator (in the order of `REPOS`, with the number of PRs; projects without open PRs are hidden), newest first within each project. Click a separator to **collapse / expand** its project; the choice is saved with your settings, and a collapsed project does not load its PRs' details. One row per PR with:
   - title (link to GitHub) and number
   - author
@@ -77,13 +82,13 @@ shared/              Code shared by frontend and backend
 server/
   src/index.ts       Entry point (environment variables)
   src/app.ts         Express REST API (/api) + serving of the built frontend
-  src/github.ts      GitHub REST client (open PRs, PR details, repository access, quota)
+  src/github.ts      GitHub client: REST (open PRs, PR details, repository access, quota), GraphQL (actions for me)
   src/store.ts       Per-user JSON persistence of the settings
   test/              Backend tests
 client/
   index.html, vite.config.ts
   src/App.tsx        Session and settings loading
-  src/components/    PR list, top bar, settings dialog, login
+  src/components/    PR list and rows, "Actions pour moi", top bar, settings dialog, login
   src/state/         Settings (React context, automatic saving)
   src/lib/           Backend API client, formatting
   test/              Frontend tests (Testing Library)
@@ -97,6 +102,7 @@ client/
 | `GET /api/state` · `PUT` | Read / save the user's settings |
 | `GET /api/pulls?limit=` | Open PRs of the tracked repositories with their base and head branches, newest first (`limit` newest, default 100) |
 | `GET /api/pulls/:owner/:repo/:number/details?updatedAt=` | Reviews (decision and approval count), diff size, mergeability and CI state of a PR (cached) |
+| `GET /api/actions` | The logged-in user's open PRs waiting for them (approved, or with unanswered discussions), via GraphQL |
 | `GET /api/repos/access` | Token access to the tracked repositories |
 | `GET /api/rate` | Remaining GitHub quota |
 
@@ -116,6 +122,7 @@ The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every
 ## Known limitations
 
 - The list shows at most the 100 most recently opened PRs across the tracked repositories (each costs ~4 API calls for its details); the counter above it says when there are more. A stack whose oldest PRs fall outside these 100 is shown from the first listed PR.
+- "Actions pour moi" reads up to 100 of your open PRs, 100 review threads and the last 100 comments and reviews of each. A reply does not count as an answer when it is a separate PR comment while the question is in a review thread: resolve the thread, or reply in it.
 - Stacks are computed on the filtered list: a PR whose parent does not match the filter is shown on its own.
 - Approvals, status and size cost 4 GitHub API calls per PR (PR, reviews, check runs, commit statuses), cached until the PR changes.
 - A CI finishing does not change the PR itself: while a PR's CI is running, its details are fetched again at each refresh (auto refresh interval), so a failure shows up at the latest one refresh later.

@@ -139,10 +139,24 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .badge.draft { color: var(--muted); }
 .badge.ok { color: var(--green); border-color: var(--green); }
 .badge.ko { color: var(--red); border-color: var(--red); }
-.badge.strong { background: var(--red); color: #fff; font-weight: 600; }
+.badge.ko.strong { background: var(--red); color: #fff; }
+.badge.strong { font-weight: 600; }
 .badge.wait { color: var(--yellow); border-color: var(--yellow); }
 .diff .add { color: var(--green); }
 .diff .del { color: var(--red); }
+
+/* "Actions pour moi": stands out above the list when it has PRs, a quiet line otherwise. */
+.my-actions {
+  margin-bottom: 16px; padding: 12px; border-radius: var(--radius);
+  border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+.my-actions h2 { margin: 0 0 10px; font-size: 16px; display: flex; align-items: center; gap: 8px; color: var(--accent); }
+.my-actions .count { background: var(--accent); color: #fff; border-radius: 20px; padding: 0 8px; font-size: 13px; }
+.my-actions-empty { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+.pr-list .row-repo { color: var(--muted); font-size: 12px; }
+.pr-list .reasons { display: inline-flex; gap: 4px; }
+.badge.ok.strong { background: var(--green); border-color: var(--green); color: #fff; }
+.badge.wait.strong { background: var(--yellow); border-color: var(--yellow); color: #fff; }
 
 /* Status bar */
 .statusbar {

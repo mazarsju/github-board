@@ -116,6 +116,11 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     res.json(await session(res).client.listOpenPRs(REPOS, limit));
   });
 
+  api.get('/actions', async (_req, res) => {
+    const s = session(res);
+    res.json(await s.client.myActions(s.login, REPOS));
+  });
+
   api.get('/pulls/:owner/:repo/:number/details', async (req, res) => {
     const { owner, repo, number } = z.object({
       owner: z.string().regex(/^[\w.-]+$/),

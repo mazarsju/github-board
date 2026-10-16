@@ -66,6 +66,15 @@ export interface PrDetails {
   ci: CiState;
 }
 
+/** One of the user's own PRs waiting for an action from them. */
+export interface MyAction {
+  pr: PullRequest;
+  /** REQUIRED_APPROVALS reached: ready to merge. */
+  approved: boolean;
+  /** Discussions whose last word is someone else's: unresolved review threads, plus the conversation. */
+  unanswered: number;
+}
+
 /** Status of a PR in the list, from most to least blocking. */
 export type PrStatus = 'ci-failed' | 'draft' | 'conflict' | 'changes' | 'approved' | 'pending';
 
