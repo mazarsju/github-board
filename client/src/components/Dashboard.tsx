@@ -52,10 +52,10 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
         <div className="brand"><Logo /><span>Github Board</span></div>
         <div className="actions">
           <input ref={filterRef} type="search" value={filter} onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filtrer (titre, projet, auteur)…" aria-label="Filtrer" />
-          <button type="button" className={`btn${fetching ? ' spinning' : ''}`} title="Rafraîchir (R)" aria-label="Rafraîchir" onClick={() => void refresh()}>⟳</button>
-          <button type="button" className="btn" title="Paramètres" aria-label="Paramètres" onClick={() => setSettingsOpen(true)}>⚙</button>
-          <img className="avatar" src={session.user.avatarUrl} alt="" title={`Connecté : ${session.user.login}`} />
+            placeholder="Filter (title, project, author)…" aria-label="Filter" />
+          <button type="button" className={`btn${fetching ? ' spinning' : ''}`} title="Refresh (R)" aria-label="Refresh" onClick={() => void refresh()}>⟳</button>
+          <button type="button" className="btn" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}>⚙</button>
+          <img className="avatar" src={session.user.avatarUrl} alt="" title={`Signed in: ${session.user.login}`} />
         </div>
       </header>
 
@@ -66,7 +66,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
       </main>
 
       <footer className="statusbar">
-        <span>{fetching ? 'Chargement…' : updatedAt ? `Mis à jour ${updatedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : '—'}</span>
+        <span>{fetching ? 'Loading…' : updatedAt ? `Updated ${updatedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '—'}</span>
         <span>{rateText}</span>
       </footer>
 

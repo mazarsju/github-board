@@ -14,7 +14,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button type="button" className="btn" onClick={() => {
       void navigator.clipboard?.writeText(text).then(() => setCopied(true), () => setCopied(false));
-    }}>{copied ? 'Copié ✓' : 'Copier'}</button>
+    }}>{copied ? 'Copied ✓' : 'Copy'}</button>
   );
 }
 
@@ -22,22 +22,22 @@ function CopyButton({ text }: { text: string }) {
 export function AttachDialog({ review, onClose }: { review: ReviewSession; onClose: () => void }) {
   const command = `claude attach "${review.name}"`;
   return (
-    <Modal title="Review en cours" subtitle={review.name} cancelLabel="Fermer" onClose={onClose}>
-      <p>La session Claude tourne en arrière-plan{review.state === 'waiting' ? ' et attend une réponse de votre part' : ''}. Pour l'ouvrir, lancez dans un terminal :</p>
+    <Modal title="Review running" subtitle={review.name} cancelLabel="Close" onClose={onClose}>
+      <p>The Claude session runs in the background{review.state === 'waiting' ? ' and waits for your answer' : ''}. To open it, run in a terminal:</p>
       <div className="command">
         <code>{command}</code>
         <CopyButton text={command} />
       </div>
-      <p className="hint">« claude agents » liste toutes les sessions en arrière-plan.</p>
+      <p className="hint"><code>claude agents</code> lists all background sessions.</p>
     </Modal>
   );
 }
 
 /** Label and badge class of each finding severity. */
 export const SEVERITY: Record<FindingSeverity, [label: string, className: string]> = {
-  critical: ['Critique', 'sev critical'],
-  major: ['Majeur', 'sev major'],
-  minor: ['Mineur', 'sev minor'],
+  critical: ['Critical', 'sev critical'],
+  major: ['Major', 'sev major'],
+  minor: ['Minor', 'sev minor'],
   nit: ['Nit', 'sev nit'],
 };
 
@@ -108,7 +108,7 @@ export function FindingDialog({ finding: f, pr, head, onClose }: {
     ? `https://github.com/${pr.owner}/${pr.repo}/blob/${head}/${f.file.split('/').map(encodeURIComponent).join('/')}${lines}`
     : null;
   return (
-    <Modal title={f.title} subtitle={`${pr.repo}#${pr.number} · finding ${f.id}`} cancelLabel="Fermer" className="wide code" onClose={onClose}>
+    <Modal title={f.title} subtitle={`${pr.repo}#${pr.number} · finding ${f.id}`} cancelLabel="Close" className="wide code" onClose={onClose}>
       <p className="finding-meta">
         <span className={`badge ${className}`}>{label}</span>
         {f.file && (codeUrl
@@ -116,16 +116,16 @@ export function FindingDialog({ finding: f, pr, head, onClose }: {
           : <code>{findingPlace(f)}</code>)}
       </p>
       {f.code && from && f.line && (
-        <CodeBlock lines={numbered(f.code)} label="Code concerné" marked={(l) => l.number! >= from && l.number! <= f.line!} />
+        <CodeBlock lines={numbered(f.code)} label="Commented code" marked={(l) => l.number! >= from && l.number! <= f.line!} />
       )}
-      <Synthesis text={f.body || '_Pas de détail._'} />
+      <Synthesis text={f.body || '_No details._'} />
       {f.suggestion && <>
-        <h3 className="finding-heading">Changement suggéré</h3>
+        <h3 className="finding-heading">Suggested change</h3>
         {f.code && from && f.line
-          ? <CodeBlock lines={suggestionDiff(f.code, from, f.line, f.suggestion)} label="Changement suggéré" />
-          : <CodeBlock lines={toLines(f.suggestion).map((text) => ({ kind: 'add', text, number: null }))} label="Changement suggéré" />}
+          ? <CodeBlock lines={suggestionDiff(f.code, from, f.line, f.suggestion)} label="Suggested change" />
+          : <CodeBlock lines={toLines(f.suggestion).map((text) => ({ kind: 'add', text, number: null }))} label="Suggested change" />}
       </>}
-      <p className="hint">Pour publier des findings sur GitHub : <code>{pickChange(pr)}</code></p>
+      <p className="hint">To post findings on GitHub: <code>{pickChange(pr)}</code></p>
     </Modal>
   );
 }
@@ -140,18 +140,18 @@ export function SynthesisDialog({ review, onClose, onDismiss }: { review: Review
   });
   return (
     <Modal
-      title="Synthèse review"
+      title="Review summary"
       subtitle={review.name}
-      cancelLabel="Fermer"
+      cancelLabel="Close"
       className="fullscreen"
       onClose={onClose}
-      footer={<button type="button" className="btn" onClick={onDismiss}>Marquer comme lue</button>}
+      footer={<button type="button" className="btn" onClick={onDismiss}>Mark as read</button>}
     >
       {error ? <p className="error">{error.message}</p>
-        : isPending ? <p className="muted">Chargement…</p>
-          : <Synthesis text={data.text ?? '_La session n’a pas laissé de message final._'} />}
+        : isPending ? <p className="muted">Loading…</p>
+          : <Synthesis text={data.text ?? '_The session left no final message._'} />}
       {/* A finished session is no longer found by name: attach takes its id. */}
-      <p className="hint">Pour poursuivre la conversation : <code>claude attach {review.id}</code></p>
+      <p className="hint">To continue the conversation: <code>claude attach {review.id}</code></p>
     </Modal>
   );
 }

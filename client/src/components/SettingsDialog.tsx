@@ -12,25 +12,25 @@ export function SettingsDialog({ onClose, onLogout, canLogout }: {
 
   return (
     <Modal
-      title="Paramètres"
-      cancelLabel="Fermer"
+      title="Settings"
+      cancelLabel="Close"
       onClose={onClose}
       onSubmit={() => { update((s) => ({ ...s, settings })); onClose(); }}
-      footer={canLogout && <button type="button" className="btn danger" onClick={onLogout}>Se déconnecter</button>}
+      footer={canLogout && <button type="button" className="btn danger" onClick={onLogout}>Sign out</button>}
     >
-      <label>Rafraîchissement automatique
+      <label>Auto refresh
         <select value={settings.refresh} onChange={(e) => set('refresh', Number(e.target.value))}>
-          <option value={0}>Désactivé</option>
-          <option value={60}>Toutes les minutes</option>
-          <option value={300}>Toutes les 5 minutes</option>
-          <option value={900}>Toutes les 15 minutes</option>
+          <option value={0}>Off</option>
+          <option value={60}>Every minute</option>
+          <option value={300}>Every 5 minutes</option>
+          <option value={900}>Every 15 minutes</option>
         </select>
       </label>
-      <label>Thème
+      <label>Theme
         <select value={settings.theme} onChange={(e) => set('theme', e.target.value as Theme)}>
-          <option value="auto">Système</option>
-          <option value="light">Clair</option>
-          <option value="dark">Sombre</option>
+          <option value="auto">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
         </select>
       </label>
     </Modal>

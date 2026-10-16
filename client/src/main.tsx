@@ -6,7 +6,7 @@ import { ToastProvider } from './components/Toast.tsx';
 import { ApiError } from './lib/api.ts';
 import './styles.css';
 
-// Session expirée côté serveur (401) → retour à l'écran de connexion.
+// Session expired on the server (401) → back to the login screen.
 const onError = (err: Error) => {
   if (err instanceof ApiError && err.status === 401) queryClient.setQueryData(['session'], null);
 };

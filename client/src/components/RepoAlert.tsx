@@ -1,22 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.ts';
 
-/** Signale les dépôts suivis (shared/config.ts) que le token ne peut pas lire. */
+/** Reports the tracked repositories (shared/config.ts) the token cannot read. */
 export function RepoAlert() {
   const { data } = useQuery({ queryKey: ['repos-access'], queryFn: api.repoAccess, staleTime: Infinity });
   const denied = (data ?? []).filter((r) => !r.ok);
   if (!denied.length) return null;
   return (
     <div className="alert" role="alert">
-      <strong>Accès impossible à {denied.length} dépôt(s) suivi(s) : leurs PRs n'apparaîtront pas.</strong>
+      <strong>No access to {denied.length} tracked repositor{denied.length > 1 ? 'ies' : 'y'}: their PRs will not be listed.</strong>
       <ul>
         {denied.map((r) => (
           <li key={r.repo}>
-            <code>{r.repo}</code> — {r.status === 404 ? 'introuvable ou non accessible avec ce token' : r.error}
+            <code>{r.repo}</code> — {r.status === 404 ? 'not found, or not accessible with this token' : r.error}
           </li>
         ))}
       </ul>
-      <span className="muted">Vérifiez le scope repo du token et, pour une organisation SSO, cliquez sur « Configure SSO » → « Authorize » dans les paramètres du token.</span>
+      <span className="muted">Check the token's repo scope and, for an SSO organization, click “Configure SSO” → “Authorize” in the token's settings.</span>
     </div>
   );
 }

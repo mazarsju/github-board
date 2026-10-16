@@ -15,7 +15,7 @@ export function LoginPage({ onLogin }: { onLogin: (s: SessionInfo) => void }) {
     try {
       onLogin(await api.login(token.trim()));
     } catch (err) {
-      setError(`Échec de connexion : ${(err as Error).message}`);
+      setError(`Sign-in failed: ${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -25,17 +25,17 @@ export function LoginPage({ onLogin }: { onLogin: (s: SessionInfo) => void }) {
     <section className="login">
       <form className="login-card" onSubmit={submit}>
         <h1>Github Board</h1>
-        <p>Toutes les Pull Requests ouvertes des dépôts suivis, une ligne par PR : auteur, ancienneté, approbations, statut et taille.</p>
-        <label htmlFor="tokenInput">Personal Access Token GitHub</label>
+        <p>All open pull requests of the tracked repositories, one row per PR: author, age, approvals, status and size.</p>
+        <label htmlFor="tokenInput">GitHub personal access token</label>
         <input type="password" id="tokenInput" value={token} onChange={(e) => setToken(e.target.value)}
-          placeholder="ghp_… ou github_pat_…" autoComplete="off" />
+          placeholder="ghp_… or github_pat_…" autoComplete="off" />
         <p className="hint">
-          Scope requis : <code>repo</code> (classic) ou accès en lecture <em>Pull requests</em>, <em>Commit statuses</em> et <em>Checks</em> (fine-grained).
-          Le token est conservé par le serveur Github Board le temps de la session (jamais dans le navigateur).{' '}
-          Pour éviter de le saisir, définissez <code>GITHUB_TOKEN</code> dans <code>.env</code>.{' '}
-          <a href="https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board" target="_blank" rel="noopener noreferrer">Créer un token</a>
+          Required scope: <code>repo</code> (classic) or read access to <em>Pull requests</em>, <em>Commit statuses</em> and <em>Checks</em> (fine-grained).
+          The token is kept by the Github Board server for the session (never in the browser).{' '}
+          To skip this step, set <code>GITHUB_TOKEN</code> in <code>.env</code>.{' '}
+          <a href="https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board" target="_blank" rel="noopener noreferrer">Create a token</a>
         </p>
-        <button className="btn primary" disabled={busy}>{busy ? 'Connexion…' : 'Se connecter'}</button>
+        <button className="btn primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
         <p className="error">{error}</p>
       </form>
     </section>

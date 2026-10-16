@@ -51,12 +51,12 @@ export function claudeCli({
     for (const key of HIDDEN_ENV) delete env[key];
     execFile(bin, args, { cwd, env, timeout: 30_000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (!err) return resolve(stdout.trim());
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return reject(new Error(`Commande « ${bin} » introuvable (variable CLAUDE_BIN)`));
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return reject(new Error(`Command "${bin}" not found (CLAUDE_BIN variable)`));
       const message = stderr.trim() || err.message;
       // Claude Code only works in folders the user trusted once, interactively.
       if (/trust/i.test(message)) {
-        return reject(new Error(`${message} — Claude Code n'a pas encore approuvé le dossier ${cwd ?? process.cwd()} : `
-          + 'lancez une fois « claude » dans ce dossier et acceptez, ou choisissez un dossier approuvé avec CLAUDE_CWD.'));
+        return reject(new Error(`${message} — Claude Code does not trust the folder ${cwd ?? process.cwd()} yet: `
+          + 'run "claude" once in that folder and accept, or pick a trusted folder with CLAUDE_CWD.'));
       }
       reject(new Error(message));
     });

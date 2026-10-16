@@ -1,7 +1,7 @@
 import { useEffect, useRef, type FormEvent, type ReactNode } from 'react';
 
 /** Native modal <dialog>, shown while the component is mounted. Without `onSubmit`, it only has a close button. */
-export function Modal({ title, subtitle, onClose, onSubmit, children, footer, cancelLabel = 'Annuler', className }: {
+export function Modal({ title, subtitle, onClose, onSubmit, children, footer, cancelLabel = 'Cancel', className }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
@@ -34,7 +34,7 @@ export function Modal({ title, subtitle, onClose, onSubmit, children, footer, ca
           {footer}
           <span className="spacer" />
           <button type="button" className="btn" onClick={onClose}>{cancelLabel}</button>
-          {onSubmit && <button type="submit" className="btn primary">Enregistrer</button>}
+          {onSubmit && <button type="submit" className="btn primary">Save</button>}
         </menu>
       </form>
     </dialog>

@@ -135,7 +135,7 @@ describe('API', () => {
     expect((await post('/pulls/DiliTrust/service-clm/7/review', {})).status).toBe(403);
     expect((await post('/pulls/o/r;rm/7/review')).status).toBe(400);
     expect((await post('/pulls/o/r/7/review')).status).toBe(404); // not a tracked repository
-    expect(await post('/pulls/DiliTrust/service-clm/13/review')).toMatchObject({ status: 500, body: { error: 'Lancement de Claude impossible : Not logged in' } });
+    expect(await post('/pulls/DiliTrust/service-clm/13/review')).toMatchObject({ status: 500, body: { error: 'Could not start Claude: Not logged in' } });
     expect(started).toHaveLength(1);
   });
 

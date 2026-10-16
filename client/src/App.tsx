@@ -42,14 +42,14 @@ export function App() {
     queryClient.setQueryData(['session'], null);
   };
 
-  if (session.isPending) return <Shell status="Connexion…" />;
-  if (session.error) return <Shell status={`Serveur injoignable : ${session.error.message}`} />;
-  if (!session.data) return <Shell status="Non connecté"><LoginPage onLogin={onLogin} /></Shell>;
-  if (appState.error) return <Shell status={`Chargement impossible : ${appState.error.message}`} />;
-  if (!appState.data) return <Shell status="Chargement…" />;
+  if (session.isPending) return <Shell status="Connecting…" />;
+  if (session.error) return <Shell status={`Server unreachable: ${session.error.message}`} />;
+  if (!session.data) return <Shell status="Not signed in"><LoginPage onLogin={onLogin} /></Shell>;
+  if (appState.error) return <Shell status={`Loading failed: ${appState.error.message}`} />;
+  if (!appState.data) return <Shell status="Loading…" />;
 
   return (
-    <AppStateProvider key={user} initial={appState.data} onSaveError={(err) => toast(`Sauvegarde impossible : ${err.message}`)}>
+    <AppStateProvider key={user} initial={appState.data} onSaveError={(err) => toast(`Saving failed: ${err.message}`)}>
       <ThemeSync />
       <Dashboard session={session.data} onLogout={() => void onLogout()} />
     </AppStateProvider>

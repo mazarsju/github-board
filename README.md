@@ -7,28 +7,28 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
 ## Features
 
 - **Tracked repositories**: defined in [`shared/config.ts`](shared/config.ts) (`REPOS`), currently `DiliTrust/service-clm`, `DiliTrust/DT_Public_API` and `DiliTrust/webapp-clm`. A banner flags any repository the token cannot read.
-- **Actions pour moi**: a highlighted block above the list with your own open PRs that wait for you (a quiet line when there are none):
-  - **À merger**: the PR reached the required approvals
-  - **N commentaire(s) sans réponse**: unresolved review threads whose last comment is someone else's (outdated threads, whose code has changed since, are taken as addressed), plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
+- **Actions for me**: a highlighted block above the list with your own open PRs that wait for you (a quiet line when there are none):
+  - **Ready to merge**: the PR reached the required approvals
+  - **N unanswered comments**: unresolved review threads whose last comment is someone else's (outdated threads, whose code has changed since, are taken as addressed), plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
 
   These PRs also stay in their project below. Finished reviews (see "Review with Claude") are listed here too.
 - **PR list**, grouped by project under a separator (in the order of `REPOS`, with the number of PRs; projects without open PRs are hidden), newest first within each project. Click a separator to **collapse / expand** its project; the choice is saved with your settings, and a collapsed project does not load its PRs' details. One row per PR with:
   - title (link to GitHub) and number
   - author
-  - time since the PR was opened (`45 min`, `5 h`, `3 j`, `2 sem.`…; full date on hover)
+  - time since the PR was opened (`45 min`, `5 h`, `3 d`, `2 w`, `4 mo`, `1 y`; full date on hover)
   - approvals out of the number required to merge (`1/2`; the threshold is `REQUIRED_APPROVALS` in `shared/config.ts`, currently **2**)
-  - status, the most blocking one winning: **CI FAILED** (a check or commit status of the last commit failed — failed, timed out, cancelled, action required; only the latest run of each check counts, so a successful re-run clears an earlier failure) › **Draft** › **Conflit** (merge conflict) › **Changements demandés** › **Approuvée** (required approvals reached) › **Review en attente**
+  - status, the most blocking one winning: **CI FAILED** (a check or commit status of the last commit failed — failed, timed out, cancelled, action required; only the latest run of each check counts, so a successful re-run clears an earlier failure) › **Draft** › **Conflict** (merge conflict) › **Changes requested** › **Approved** (required approvals reached) › **Review pending**
   - change size (`+added −deleted` lines; number of files on hover)
 - **Stacked PRs** are kept together: a PR whose base branch is the branch of another open PR of the same project is listed right under it, indented (↳, with the parent PR on hover), and the first PR of the stack shows `stack · N`. A stack is placed where its newest PR would be; a PR with several stacked PRs forms a tree, oldest child first.
 - **Review with Claude** (✦ button at the end of each row of the project list): starts a **background Claude Code session** on the server's machine, named `review <project>#<number>`, that runs the user's **`/pr-review <PR URL>`** skill (in `~/.claude/skills/pr-review`). The skill reviews the PR without posting anything and saves its findings to `~/.cache/pr-review/<owner>-<repo>-<number>/findings.json`.
   - **While it runs**, the ✦ button pulses (yellow when the session waits for an answer); clicking it shows the command that opens the session in a terminal, `claude attach "review service-clm#16664"`, with a copy button. Sessions are checked every 5 seconds while one runs.
-  - **Once finished**, "Actions pour moi" lists the PR with a **Synthèse review** button showing the session's final answer full screen, rendered as Markdown (GitHub flavor: tables, checklists; raw HTML is ignored, links open in a new tab), and the command to resume the conversation, `claude attach <session id>` (a finished session is no longer found by its name). **Marquer comme lue** removes it (saved with your settings); the PR can then be reviewed again. A session that ended in error is flagged **Review échouée**.
-  - **Findings**: the entry shows the count per severity (Critique, Majeur, Mineur, Nit), and each finding is stacked under it, most severe first: severity, title, `file:line`, and a `suggestion` tag when it comes with a fix. Clicking one opens its detail, laid out like a GitHub review comment: the commented lines highlighted among their surrounding code (fetched from GitHub at the reviewed commit), the comment (Markdown), the suggested change as a diff of those lines, a link to the lines on GitHub, and the `/pick-change <PR URL>` command that posts the chosen findings on GitHub.
+  - **Once finished**, "Actions for me" lists the PR with a **Review summary** button showing the session's final answer full screen, rendered as Markdown (GitHub flavor: tables, checklists; raw HTML is ignored, links open in a new tab), and the command to resume the conversation, `claude attach <session id>` (a finished session is no longer found by its name). **Mark as read** removes it (saved with your settings); the PR can then be reviewed again. A session that ended in error is flagged **Review failed**.
+  - **Findings**: the entry shows the count per severity (Critical, Major, Minor, Nit), and each finding is stacked under it, most severe first: severity, title, `file:line`, and a `suggestion` tag when it comes with a fix. Clicking one opens its detail, laid out like a GitHub review comment: the commented lines highlighted among their surrounding code (fetched from GitHub at the reviewed commit), the comment (Markdown), the suggested change as a diff of those lines, a link to the lines on GitHub, and the `/pick-change <PR URL>` command that posts the chosen findings on GitHub.
 - Instant filter on title, project, number and author
 - Auto refresh, API quota counter, light/dark theme
 - Shortcuts: `/` filter, `r` refresh
 
-The interface is in French.
+The interface is in English.
 
 ## Getting started
 
@@ -95,7 +95,7 @@ server/
 client/
   index.html, vite.config.ts
   src/App.tsx        Session and settings loading
-  src/components/    PR list and rows, "Actions pour moi", top bar, settings dialog, login
+  src/components/    PR list and rows, "Actions for me", top bar, settings dialog, login
   src/state/         Settings (React context, automatic saving)
   src/lib/           Backend API client, formatting, line diff of suggestions
   test/              Frontend tests (Testing Library)
@@ -132,7 +132,7 @@ The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every
 ## Known limitations
 
 - The list shows at most the 100 most recently opened PRs across the tracked repositories (each costs ~4 API calls for its details); the counter above it says when there are more. A stack whose oldest PRs fall outside these 100 is shown from the first listed PR.
-- "Actions pour moi" reads up to 100 of your open PRs, 100 review threads and the last 100 comments and reviews of each. A reply does not count as an answer when it is a separate PR comment while the question is in a review thread: resolve the thread, or reply in it.
+- "Actions for me" reads up to 100 of your open PRs, 100 review threads and the last 100 comments and reviews of each. A reply does not count as an answer when it is a separate PR comment while the question is in a review thread: resolve the thread, or reply in it.
 - Stacks are computed on the filtered list: a PR whose parent does not match the filter is shown on its own.
 - Approvals, status and size cost 4 GitHub API calls per PR (PR, reviews, check runs, commit statuses), cached until the PR changes.
 - A CI finishing does not change the PR itself: while a PR's CI is running, its details are fetched again at each refresh (auto refresh interval), so a failure shows up at the latest one refresh later.

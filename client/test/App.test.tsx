@@ -60,7 +60,7 @@ function mockBackend() {
       loggedIn = true;
       return json(200, SESSION);
     }
-    if (!loggedIn) return json(401, { error: 'Non connecté' });
+    if (!loggedIn) return json(401, { error: 'Not signed in' });
     switch (url.pathname) {
       case '/api/session': return json(200, SESSION);
       case '/api/state': return method === 'PUT' ? (saved.push(JSON.parse(String(init.body))), json(204)) : json(200, initialState);
@@ -72,7 +72,7 @@ function mockBackend() {
       case '/api/pulls': return json(200, { total: PRS.length, items: PRS });
       case '/api/actions': return json(200, actions);
       case '/api/pulls/DiliTrust/service-clm/2/review':
-        if (init.method !== 'POST' || new Headers(init.headers).get('X-Github-Board') !== '1') return json(403, { error: 'Refusé' });
+        if (init.method !== 'POST' || new Headers(init.headers).get('X-Github-Board') !== '1') return json(403, { error: 'Denied' });
         reviews = [session('DiliTrust/service-clm#2', 'started', true)];
         return json(200, { name: 'review service-clm#2', output: 'abc' });
       case '/api/reviews': return json(200, reviews);
@@ -81,7 +81,7 @@ function mockBackend() {
           code: { start: 8, lines: ['// 8', 'function f() {', 'try {', '  run();', '} catch {}', '}', '// 14'] } },
         { id: 1, severity: 'critical', file: 'src/db.ts', line: 3, startLine: null, title: 'Injection SQL', body: 'Requête concaténée.', suggestion: null },
       ] });
-      case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Lancement de Claude impossible : Not logged in' });
+      case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Could not start Claude: Not logged in' });
       default: {
         const m = /^\/api\/pulls\/DiliTrust\/([\w-]+)\/(\d+)\/details$/.exec(url.pathname);
         if (m) return json(200, { ...DETAILS, ...DETAILS_BY_PR[`${m[1]}#${m[2]}`] });
@@ -97,7 +97,7 @@ function renderApp() {
 }
 
 const row = async (title: string) => {
-  const list = await screen.findByRole('region', { name: 'Liste des PRs' });
+  const list = await screen.findByRole('region', { name: 'PR list' });
   return (await within(list).findByRole('link', { name: title })).closest('tr')!;
 };
 
@@ -108,18 +108,19 @@ test('logs in, then shows the PR list and the inaccessible repositories', async 
   const user = userEvent.setup();
   renderApp();
 
-  await user.type(await screen.findByLabelText('Personal Access Token GitHub'), 'nope');
-  await user.click(screen.getByRole('button', { name: 'Se connecter' }));
-  expect(await screen.findByText(/Échec de connexion : Bad credentials/)).toBeInTheDocument();
+  await user.type(await screen.findByLabelText('GitHub personal access token'), 'nope');
+  await user.click(screen.getByRole('button', { name: 'Sign in' }));
+  expect(await screen.findByText(/Sign-in failed: Bad credentials/)).toBeInTheDocument();
 
-  await user.clear(screen.getByLabelText('Personal Access Token GitHub'));
-  await user.type(screen.getByLabelText('Personal Access Token GitHub'), 'good');
-  await user.click(screen.getByRole('button', { name: 'Se connecter' }));
+  await user.clear(screen.getByLabelText('GitHub personal access token'));
+  await user.type(screen.getByLabelText('GitHub personal access token'), 'good');
+  await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
   expect(await screen.findByRole('link', { name: 'PR de service-clm' })).toHaveAttribute('href', 'https://github.com/DiliTrust/service-clm/pull/1');
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent('DiliTrust/webapp-clm');
+  expect(alert).toHaveTextContent('No access to 1 tracked repository: their PRs will not be listed.');
   expect(alert).not.toHaveTextContent('DiliTrust/service-clm');
 });
 
@@ -130,18 +131,18 @@ test('one row per open PR with author, approvals, status and size', async () => 
   const conflict = await row('PR de service-clm');
   expect(within(conflict).getByText('#1')).toBeInTheDocument();
   expect(within(conflict).getByText('bob')).toBeInTheDocument();
-  expect(await within(conflict).findByText('Conflit')).toBeInTheDocument();
+  expect(await within(conflict).findByText('Conflict')).toBeInTheDocument();
   expect(within(conflict).getByText('2/2')).toBeInTheDocument();
   expect(within(conflict).getByText('+5')).toBeInTheDocument();
   expect(within(conflict).getByText('−2')).toBeInTheDocument();
 
-  expect(await within(await row('PR de DT_Public_API')).findByText('Approuvée')).toBeInTheDocument();
+  expect(await within(await row('PR de DT_Public_API')).findByText('Approved')).toBeInTheDocument();
   const waiting = await row('PR de webapp-clm');
   expect(within(waiting).getByText('carol')).toBeInTheDocument();
-  expect(await within(waiting).findByText('Review en attente')).toBeInTheDocument();
+  expect(await within(waiting).findByText('Review pending')).toBeInTheDocument();
   expect(within(waiting).getByText('1/2')).toBeInTheDocument();
   const changes = await row('Refonte service');
-  expect(await within(changes).findByText('Changements demandés')).toBeInTheDocument();
+  expect(await within(changes).findByText('Changes requested')).toBeInTheDocument();
   expect(within(changes).getByText('+120')).toBeInTheDocument();
   expect(await within(await row('Brouillon webapp')).findByText('Draft')).toBeInTheDocument();
   // A failed CI wins even over draft and conflict.
@@ -149,7 +150,7 @@ test('one row per open PR with author, approvals, status and size', async () => 
 
   // Header row + 3 project rows + 6 PRs.
   expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(10);
-  expect(screen.getByText('6 PR(s) ouverte(s)')).toBeInTheDocument();
+  expect(screen.getByText('6 open PRs')).toBeInTheDocument();
 });
 
 test('PRs are grouped under one separator per project, in the configured order', async () => {
@@ -173,7 +174,7 @@ test('a stacked PR is listed right under the PR it builds on, indented', async (
   const child = await row('Refonte service');
   expect(root.nextElementSibling).toBe(child);
   expect(within(root).getByText('stack · 2')).toBeInTheDocument();
-  expect(within(child).getByTitle('Empilée sur #1 (service-clm-1)')).toHaveTextContent('↳');
+  expect(within(child).getByTitle('Stacked on #1 (service-clm-1)')).toHaveTextContent('↳');
   expect(root).toHaveClass('in-stack');
   expect(root).not.toHaveClass('stack-end');
   expect(child).toHaveClass('in-stack', 'stack-end'); // last PR of the stack: shorter bar
@@ -220,7 +221,7 @@ test('a group saved as collapsed starts collapsed and does not load its PR detai
   expect(calls.some((u) => u.includes('/pulls/DiliTrust/DT_Public_API/'))).toBe(true);
 });
 
-test('"Actions pour moi" lists the user\'s PRs to merge or with unanswered comments, above the list', async () => {
+test('"Actions for me" lists the user\'s PRs to merge or with unanswered comments, above the list', async () => {
   loggedIn = true;
   actions = [
     { pr: PRS[1]!, approved: true, unanswered: 0 },
@@ -228,32 +229,32 @@ test('"Actions pour moi" lists the user\'s PRs to merge or with unanswered comme
   ];
   renderApp();
 
-  const section = await screen.findByRole('region', { name: 'Actions pour moi' });
-  expect(within(section).getByRole('heading')).toHaveTextContent('Actions pour moi 2');
+  const section = await screen.findByRole('region', { name: 'Actions for me' });
+  expect(within(section).getByRole('heading')).toHaveTextContent('Actions for me 2');
   const toMerge = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
   expect(within(toMerge).getByText('DT_Public_API')).toBeInTheDocument(); // project before the title
-  expect(within(toMerge).getByText('À merger')).toBeInTheDocument();
-  expect(await within(toMerge).findByText('Approuvée')).toBeInTheDocument();
+  expect(within(toMerge).getByText('Ready to merge')).toBeInTheDocument();
+  expect(await within(toMerge).findByText('Approved')).toBeInTheDocument();
   const toAnswer = within(section).getByRole('link', { name: 'PR de webapp-clm' }).closest('tr')!;
-  expect(within(toAnswer).getByText('3 commentaire(s) sans réponse')).toBeInTheDocument();
+  expect(within(toAnswer).getByText('3 unanswered comments')).toBeInTheDocument();
   expect(within(toAnswer).queryByText('carol')).not.toBeInTheDocument(); // the action replaces the author
 
   // Shown before the PR list, which still lists the same PRs in their project.
-  const list = screen.getByRole('region', { name: 'Liste des PRs' });
+  const list = screen.getByRole('region', { name: 'PR list' });
   expect(list.firstElementChild).toBe(section);
   expect(screen.getAllByRole('link', { name: 'PR de DT_Public_API' })).toHaveLength(2);
 });
 
-test('"Actions pour moi" is a quiet line when nothing waits, and follows the filter', async () => {
+test('"Actions for me" is a quiet line when nothing waits, and follows the filter', async () => {
   loggedIn = true;
   const user = userEvent.setup();
   actions = [{ pr: PRS[1]!, approved: true, unanswered: 0 }];
   renderApp();
 
-  await screen.findByRole('region', { name: 'Actions pour moi' });
-  await user.type(screen.getByLabelText('Filtrer'), 'webapp');
-  expect(screen.queryByRole('region', { name: 'Actions pour moi' })).not.toBeInTheDocument();
-  expect(screen.getByText('Actions pour moi : rien en attente ✓')).toBeInTheDocument();
+  await screen.findByRole('region', { name: 'Actions for me' });
+  await user.type(screen.getByLabelText('Filter'), 'webapp');
+  expect(screen.queryByRole('region', { name: 'Actions for me' })).not.toBeInTheDocument();
+  expect(screen.getByText('Actions for me: nothing pending ✓')).toBeInTheDocument();
 });
 
 test('the "Review" button of a list row starts a background Claude session', async () => {
@@ -262,18 +263,18 @@ test('the "Review" button of a list row starts a background Claude session', asy
   actions = [{ pr: PRS[1]!, approved: true, unanswered: 0 }];
   renderApp();
 
-  await user.click(within(await row('Refonte service')).getByRole('button', { name: 'Review avec Claude : service-clm#2' }));
-  expect(await screen.findByText('Session Claude lancée en arrière-plan. Pour la suivre : claude attach "review service-clm#2"')).toBeInTheDocument();
+  await user.click(within(await row('Refonte service')).getByRole('button', { name: 'Review with Claude: service-clm#2' }));
+  expect(await screen.findByText('Claude session started in the background. To follow it: claude attach "review service-clm#2"')).toBeInTheDocument();
   // The sessions are checked again at once: the row now shows the running session.
-  expect(await within(await row('Refonte service')).findByRole('button', { name: 'Review en cours : ouvrir la session' })).toBeInTheDocument();
+  expect(await within(await row('Refonte service')).findByRole('button', { name: 'Review running: open the session' })).toBeInTheDocument();
 
-  await user.click(within(await row('PR de webapp-clm')).getByRole('button', { name: /Review avec Claude/ }));
-  expect(await screen.findByText('Lancement de Claude impossible : Not logged in')).toBeInTheDocument();
+  await user.click(within(await row('PR de webapp-clm')).getByRole('button', { name: /Review with Claude/ }));
+  expect(await screen.findByText('Could not start Claude: Not logged in')).toBeInTheDocument();
 
-  // Only in the project list, not in "Actions pour moi".
-  const section = screen.getByRole('region', { name: 'Actions pour moi' });
-  expect(within(section).queryByRole('button', { name: /Review avec Claude/ })).not.toBeInTheDocument();
-  expect(screen.getAllByRole('button', { name: /Review avec Claude/ })).toHaveLength(PRS.length - 1); // one is running
+  // Only in the project list, not in "Actions for me".
+  const section = screen.getByRole('region', { name: 'Actions for me' });
+  expect(within(section).queryByRole('button', { name: /Review with Claude/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /Review with Claude/ })).toHaveLength(PRS.length - 1); // one is running
 });
 
 test('a running review replaces the Review button with one telling how to open the session', async () => {
@@ -282,26 +283,26 @@ test('a running review replaces the Review button with one telling how to open t
   reviews = [session('DiliTrust/service-clm#2', 'r1', true)];
   renderApp();
 
-  const running = await within(await row('Refonte service')).findByRole('button', { name: 'Review en cours : ouvrir la session' });
-  expect(within(await row('Refonte service')).queryByRole('button', { name: /Review avec Claude/ })).not.toBeInTheDocument();
+  const running = await within(await row('Refonte service')).findByRole('button', { name: 'Review running: open the session' });
+  expect(within(await row('Refonte service')).queryByRole('button', { name: /Review with Claude/ })).not.toBeInTheDocument();
   await user.click(running);
-  const dialog = await screen.findByRole('dialog', { name: 'Review en cours' });
+  const dialog = await screen.findByRole('dialog', { name: 'Review running' });
   expect(within(dialog).getByText('claude attach "review service-clm#2"')).toBeInTheDocument();
-  expect(within(dialog).getByRole('button', { name: 'Copier' })).toBeInTheDocument();
-  // Running sessions are not in "Actions pour moi" yet.
-  expect(screen.queryByRole('button', { name: 'Synthèse review' })).not.toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+  // Running sessions are not in "Actions for me" yet.
+  expect(screen.queryByRole('button', { name: 'Review summary' })).not.toBeInTheDocument();
 });
 
-test('a finished review shows its synthesis in "Actions pour moi" until marked as read', async () => {
+test('a finished review shows its synthesis in "Actions for me" until marked as read', async () => {
   loggedIn = true;
   const user = userEvent.setup();
   reviews = [session('DiliTrust/DT_Public_API#1', 'r2', false)];
   renderApp();
 
-  const section = await screen.findByRole('region', { name: 'Actions pour moi' });
+  const section = await screen.findByRole('region', { name: 'Actions for me' });
   const entry = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
-  await user.click(within(entry).getByRole('button', { name: 'Synthèse review' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Synthèse review' });
+  await user.click(within(entry).getByRole('button', { name: 'Review summary' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Review summary' });
   // Rendered as Markdown; raw HTML is not.
   expect(await within(dialog).findByRole('heading', { name: 'Verdict' })).toBeInTheDocument();
   expect(within(dialog).getByText('Rien de bloquant.').tagName).toBe('STRONG');
@@ -310,13 +311,13 @@ test('a finished review shows its synthesis in "Actions pour moi" until marked a
   expect(dialog.querySelector('img')).toBeNull();
   expect(within(dialog).getByText('claude attach r2')).toBeInTheDocument();
 
-  await user.click(within(dialog).getByRole('button', { name: 'Marquer comme lue' }));
-  expect(screen.queryByRole('dialog', { name: 'Synthèse review' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('region', { name: 'Actions pour moi' })).not.toBeInTheDocument();
-  expect(screen.getByText('Actions pour moi : rien en attente ✓')).toBeInTheDocument();
+  await user.click(within(dialog).getByRole('button', { name: 'Mark as read' }));
+  expect(screen.queryByRole('dialog', { name: 'Review summary' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Actions for me' })).not.toBeInTheDocument();
+  expect(screen.getByText('Actions for me: nothing pending ✓')).toBeInTheDocument();
   await waitFor(() => expect(saved.at(-1)?.settings.dismissedReviews).toEqual(['r2']));
   // The PR can be reviewed again.
-  expect(within(await row('PR de DT_Public_API')).getByRole('button', { name: /Review avec Claude/ })).toBeInTheDocument();
+  expect(within(await row('PR de DT_Public_API')).getByRole('button', { name: /Review with Claude/ })).toBeInTheDocument();
 });
 
 test('the findings of a finished review are stacked under it and open their detail', async () => {
@@ -325,10 +326,10 @@ test('the findings of a finished review are stacked under it and open their deta
   reviews = [session('DiliTrust/DT_Public_API#1', 'r2', false)];
   renderApp();
 
-  const section = await screen.findByRole('region', { name: 'Actions pour moi' });
+  const section = await screen.findByRole('region', { name: 'Actions for me' });
   const entry = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
-  expect(await within(entry).findByText('1 Critique')).toBeInTheDocument();
-  expect(within(entry).getByText('1 Mineur')).toBeInTheDocument();
+  expect(await within(entry).findByText('1 Critical')).toBeInTheDocument();
+  expect(within(entry).getByText('1 Minor')).toBeInTheDocument();
   // One row per finding, right under the PR, in the skill's order.
   const first = entry.nextElementSibling as HTMLElement;
   expect(first).toHaveTextContent('Erreur avalée');
@@ -339,12 +340,12 @@ test('the findings of a finished review are stacked under it and open their deta
   const dialog = await screen.findByRole('dialog', { name: 'Erreur avalée' });
   expect(within(dialog).getByText('tout').tagName).toBe('STRONG');
   // The commented code, lines 10 to 12 highlighted among their context.
-  const code = within(dialog).getByRole('table', { name: 'Code concerné' });
+  const code = within(dialog).getByRole('table', { name: 'Commented code' });
   const rows = within(code).getAllByRole('row');
   expect(rows.map((r) => r.textContent)).toEqual(['8// 8', '9function f() {', '10try {', '11  run();', '12} catch {}', '13}', '14// 14']);
   expect(rows.filter((r) => r.classList.contains('marked')).map((r) => r.firstElementChild!.textContent)).toEqual(['10', '11', '12']);
   // The suggestion as a diff of those lines.
-  const diff = within(dialog).getByRole('table', { name: 'Changement suggéré' });
+  const diff = within(dialog).getByRole('table', { name: 'Suggested change' });
   expect(within(diff).getAllByRole('row').map((r) => `${r.className.replace('code-line ', '')} ${r.firstElementChild!.textContent}`)).toEqual([
     'same 8', 'same 9', 'same 10', 'same 11', 'del 12', 'add ', 'add ', 'add ', 'same 13', 'same 14',
   ]);
@@ -352,7 +353,7 @@ test('the findings of a finished review are stacked under it and open their deta
   expect(within(dialog).getByRole('link', { name: 'src/a b.ts:10-12' }))
     .toHaveAttribute('href', 'https://github.com/DiliTrust/DT_Public_API/blob/abc1234/src/a%20b.ts#L10-L12');
   expect(within(dialog).getByText(/^\/pick-change /)).toBeInTheDocument();
-  await user.click(within(dialog).getByRole('button', { name: 'Fermer' }));
+  await user.click(within(dialog).getByRole('button', { name: 'Close' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
@@ -362,16 +363,16 @@ test('the filter narrows the list', async () => {
   renderApp();
 
   await row('Refonte service');
-  await user.type(screen.getByLabelText('Filtrer'), 'carol');
+  await user.type(screen.getByLabelText('Filter'), 'carol');
   // Header row + the webapp-clm project row + 1 PR: empty projects are hidden.
   expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(3);
   expect(screen.getByText('webapp-clm')).toBeInTheDocument();
   expect(screen.queryByText('service-clm')).not.toBeInTheDocument();
-  expect(screen.getByText('1 PR(s) ouverte(s) sur 6 (filtre)')).toBeInTheDocument();
+  expect(screen.getByText('1 open PR of 6 (filtered)')).toBeInTheDocument();
 
-  await user.clear(screen.getByLabelText('Filtrer'));
-  await user.type(screen.getByLabelText('Filtrer'), 'introuvable');
-  expect(screen.getByText('Aucune PR ne correspond au filtre')).toBeInTheDocument();
+  await user.clear(screen.getByLabelText('Filter'));
+  await user.type(screen.getByLabelText('Filter'), 'nothing-matches');
+  expect(screen.getByText('No PR matches the filter')).toBeInTheDocument();
 });
 
 test('settings are saved on the server', async () => {
@@ -380,10 +381,10 @@ test('settings are saved on the server', async () => {
   renderApp();
 
   await row('PR de service-clm');
-  await user.click(screen.getByRole('button', { name: 'Paramètres' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Paramètres' });
-  await user.selectOptions(within(dialog).getByLabelText('Thème'), 'dark');
-  await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Settings' });
+  await user.selectOptions(within(dialog).getByLabelText('Theme'), 'dark');
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }));
 
   await waitFor(() => expect(saved.at(-1)).toEqual({ settings: { refresh: 300, theme: 'dark', collapsed: [], dismissedReviews: [] } }));
   expect(document.documentElement.dataset.theme).toBe('dark');

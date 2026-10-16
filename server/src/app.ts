@@ -83,7 +83,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   const api = express.Router();
 
   api.post('/session', async (req, res) => {
-    if (envToken) return void res.status(409).json({ error: 'Token fourni par le serveur (GITHUB_TOKEN).' });
+    if (envToken) return void res.status(409).json({ error: 'Token provided by the server (GITHUB_TOKEN).' });
     const { token } = z.object({ token: z.string().trim().min(1) }).parse(req.body);
     const session = await openSession(token);
     const sid = randomBytes(24).toString('base64url');
@@ -95,7 +95,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   // Every following route requires a session.
   api.use(async (req, res, next) => {
     const session = await currentSession(req);
-    if (!session) return void res.status(401).json({ error: 'Non connecté' });
+    if (!session) return void res.status(401).json({ error: 'Not signed in' });
     res.locals.session = session;
     next();
   });
@@ -146,20 +146,20 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   // requests from this machine, sent by the app itself.
   const localOnly = (req: Request, res: Response, next: NextFunction) => {
     if (isLoopback(req.socket.remoteAddress) && req.get(REVIEW_HEADER) === '1') return next();
-    res.status(403).json({ error: 'Review possible uniquement depuis l’app, sur la machine du serveur.' });
+    res.status(403).json({ error: 'Reviews can only be started from the app, on the server\'s machine.' });
   };
   const claudeError = (res: Response, action: string, err: unknown) =>
-    res.status(500).json({ error: `${action} : ${(err as Error).message}` });
+    res.status(500).json({ error: `${action}: ${(err as Error).message}` });
 
   api.post('/pulls/:owner/:repo/:number/review', localOnly, async (req, res) => {
     const { owner, repo, number } = pullParams.parse(req.params);
-    if (!REPOS.includes(`${owner}/${repo}`)) return void res.status(404).json({ error: 'Dépôt non suivi' });
+    if (!REPOS.includes(`${owner}/${repo}`)) return void res.status(404).json({ error: 'Repository not tracked' });
     const name = reviewName(repo, number);
     try {
       const output = await claude.startBackground(reviewPrompt(owner, repo, number), name);
       res.json({ name, output });
     } catch (err) {
-      claudeError(res, 'Lancement de Claude impossible', err);
+      claudeError(res, 'Could not start Claude', err);
     }
   });
 
@@ -167,7 +167,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     try {
       res.json(toReviewSessions(await claude.listBackground(), REPOS));
     } catch (err) {
-      claudeError(res, 'Sessions Claude illisibles', err);
+      claudeError(res, 'Could not read the Claude sessions', err);
     }
   });
 
@@ -180,7 +180,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
       const text = bg && /^[\w-]+$/.test(bg.sessionId) ? await claude.readResult(bg.sessionId) : null;
       const target = bg && reviewTarget(bg.name, REPOS);
       const saved = target ? await claude.readFindings(target.owner, target.repo, target.number, bg.startedAt) : null;
-      if (text === null && !saved) return void res.status(404).json({ error: 'Aucun résultat pour cette session.' });
+      if (text === null && !saved) return void res.status(404).json({ error: 'No result for this session.' });
       // The commented code at the reviewed commit, as GitHub shows it with a review comment.
       const { client } = session(res);
       const findings = saved && target && saved.head ? await Promise.all(saved.findings.map(async (f) => {
@@ -190,7 +190,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
       })) : saved?.findings ?? null;
       res.json({ text, findings, head: saved?.head ?? null });
     } catch (err) {
-      claudeError(res, 'Résultat illisible', err);
+      claudeError(res, 'Could not read the result', err);
     }
   });
 
@@ -199,7 +199,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   });
 
   api.use((_req, res) => {
-    res.status(404).json({ error: 'Route inconnue' });
+    res.status(404).json({ error: 'Unknown route' });
   });
 
   app.use('/api', api);
@@ -210,10 +210,10 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   }
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (err instanceof z.ZodError) return void res.status(400).json({ error: 'Requête invalide', issues: err.issues });
+    if (err instanceof z.ZodError) return void res.status(400).json({ error: 'Invalid request', issues: err.issues });
     if (err instanceof GitHubError) return void res.status(err.status >= 500 ? 502 : err.status).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Erreur interne' });
+    res.status(500).json({ error: 'Internal error' });
   });
 
   return app;

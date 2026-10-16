@@ -33,7 +33,7 @@ describe('claudeCli', () => {
   });
 
   test('reports a missing executable and CLI errors', async () => {
-    await expect(claudeCli({ bin: '/nonexistent/claude' }).startBackground('/x', 'n')).rejects.toThrow('« /nonexistent/claude » introuvable');
+    await expect(claudeCli({ bin: '/nonexistent/claude' }).startBackground('/x', 'n')).rejects.toThrow('"/nonexistent/claude" not found');
     const bin = await fakeClaude('echo "Not logged in" >&2; exit 1');
     await expect(claudeCli({ bin }).startBackground('/x', 'n')).rejects.toThrow('Not logged in');
   });
@@ -41,7 +41,7 @@ describe('claudeCli', () => {
   test('explains how to fix a folder Claude Code does not trust yet', async () => {
     const bin = await fakeClaude('echo "Workspace not trusted" >&2; exit 1');
     await expect(claudeCli({ bin, cwd: dir }).startBackground('/x', 'n')).rejects.toThrow(
-      `Workspace not trusted — Claude Code n'a pas encore approuvé le dossier ${dir} : lancez une fois « claude » dans ce dossier et acceptez, ou choisissez un dossier approuvé avec CLAUDE_CWD.`,
+      `Workspace not trusted — Claude Code does not trust the folder ${dir} yet: run "claude" once in that folder and accept, or pick a trusted folder with CLAUDE_CWD.`,
     );
   });
 

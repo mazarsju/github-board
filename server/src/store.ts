@@ -1,4 +1,4 @@
-// Persistance de l'état personnel de chaque utilisateur GitHub dans un fichier JSON.
+// Persistence of each GitHub user's personal state in a JSON file.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { migrate } from '../../shared/state.ts';
@@ -39,7 +39,7 @@ export class JsonFileStore implements StateStore {
   async set(login: string, state: AppState): Promise<void> {
     const data = await this.load();
     data.users[login] = state;
-    // Écritures sérialisées et atomiques (fichier temporaire puis renommage).
+    // Serialized, atomic writes (temporary file, then rename).
     this.writing = this.writing.catch(() => {}).then(async () => {
       await mkdir(dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
@@ -50,7 +50,7 @@ export class JsonFileStore implements StateStore {
   }
 }
 
-/** Store en mémoire (tests). */
+/** In-memory store (tests). */
 export class MemoryStore implements StateStore {
   users = new Map<string, AppState>();
 

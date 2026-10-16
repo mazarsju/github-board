@@ -1,4 +1,4 @@
-// "Actions pour moi", highlighted above the list: the user's own PRs waiting for them,
+// "Actions for me", highlighted above the list: the user's own PRs waiting for them,
 // and the finished "Review" sessions, with their synthesis and findings.
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -14,19 +14,19 @@ const COLUMNS = 6;
 function Reasons({ action: { approved, unanswered } }: { action: MyAction }) {
   return (
     <span className="reasons">
-      {approved && <span className="badge ok strong" title="Assez d'approbations pour merger">À merger</span>}
+      {approved && <span className="badge ok strong" title="Enough approvals to merge">Ready to merge</span>}
       {unanswered > 0 && (
-        <span className="badge wait strong" title="Fils de review non résolus ou conversation dont le dernier message n'est pas le vôtre (bots exclus)">
-          {unanswered} commentaire(s) sans réponse
+        <span className="badge wait strong" title="Unresolved review threads, or a conversation whose last message is not yours (bots excluded)">
+          {unanswered} unanswered comment{unanswered === 1 ? '' : 's'}
         </span>
       )}
     </span>
   );
 }
 
-/** Count of findings per severity, e.g. "1 Critique · 2 Mineur". */
+/** Count of findings per severity, e.g. "1 Critical · 2 Minor". */
 function FindingCounts({ findings }: { findings: ReviewFinding[] }) {
-  if (!findings.length) return <span className="badge ok">Aucun finding</span>;
+  if (!findings.length) return <span className="badge ok">No findings</span>;
   const counts = new Map<FindingSeverity, number>();
   for (const f of findings) counts.set(f.severity, (counts.get(f.severity) ?? 0) + 1);
   return <>{[...counts].map(([severity, n]) => (
@@ -51,8 +51,8 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
     <>
       <PrRow row={{ pr, depth: 0 }} refresh={refresh} action={
         <span className="reasons">
-          <button type="button" className="btn primary small" title="Résultat de la review Claude" onClick={() => setOpen('synthesis')}>Synthèse review</button>
-          {review.state === 'failed' && <span className="badge ko strong" title="La session Claude s'est terminée en erreur">Review échouée</span>}
+          <button type="button" className="btn primary small" title="Result of the Claude review" onClick={() => setOpen('synthesis')}>Review summary</button>
+          {review.state === 'failed' && <span className="badge ko strong" title="The Claude session ended with an error">Review failed</span>}
           {data?.findings && <FindingCounts findings={data.findings} />}
           {error && <span className="muted" title={error.message}>—</span>}
         </span>
@@ -64,7 +64,7 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
               <span className={`badge ${SEVERITY[f.severity][1]}`}>{SEVERITY[f.severity][0]}</span>
               <span className="finding-title">{f.title}</span>
               {f.file && <code className="muted">{findingPlace(f)}</code>}
-              {f.suggestion && <span className="badge" title="Correctif proposé">suggestion</span>}
+              {f.suggestion && <span className="badge" title="Fix proposed">suggestion</span>}
             </button>
           </td>
         </tr>
@@ -95,24 +95,24 @@ export function MyActions({ filter, refresh, pulls, reviews }: {
     update((s) => ({ ...s, settings: { ...s.settings, dismissedReviews: [...s.settings.dismissedReviews, review.id] } }));
   };
 
-  if (error && !syntheses.length) return <p className="my-actions-empty error">Actions pour moi indisponibles : {error.message}</p>;
+  if (error && !syntheses.length) return <p className="my-actions-empty error">Actions for me unavailable: {error.message}</p>;
   if (!data && !syntheses.length) return null;
   const actions = (data ?? []).filter((a) => matchesFilter(a.pr, filter));
-  if (!actions.length && !syntheses.length) return <p className="my-actions-empty">Actions pour moi : rien en attente ✓</p>;
+  if (!actions.length && !syntheses.length) return <p className="my-actions-empty">Actions for me: nothing pending ✓</p>;
 
   return (
-    <section className="my-actions" aria-label="Actions pour moi">
-      <h2>Actions pour moi <span className="count">{actions.length + syntheses.length}</span></h2>
+    <section className="my-actions" aria-label="Actions for me">
+      <h2>Actions for me <span className="count">{actions.length + syntheses.length}</span></h2>
       <div className="pr-list-wrap">
         <table className="pr-list">
           <thead>
             <tr>
               <th scope="col">PR</th>
               <th scope="col">Action</th>
-              <th scope="col">Ouverte depuis</th>
-              <th scope="col" className="num">Approbations</th>
-              <th scope="col">Statut</th>
-              <th scope="col" className="num">Taille</th>
+              <th scope="col">Open for</th>
+              <th scope="col" className="num">Approvals</th>
+              <th scope="col">Status</th>
+              <th scope="col" className="num">Size</th>
             </tr>
           </thead>
           <tbody>

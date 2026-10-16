@@ -30,7 +30,7 @@ export function PrList({ filter }: { filter: string }) {
   const review = async (pr: PullRequest) => {
     try {
       const { name } = await api.review(pr);
-      toast(`Session Claude lancée en arrière-plan. Pour la suivre : claude attach "${name}"`, 10_000);
+      toast(`Claude session started in the background. To follow it: claude attach "${name}"`, 10_000);
       await queryClient.invalidateQueries({ queryKey: ['reviews'] });
     } catch (err) {
       toast((err as Error).message, 10_000);
@@ -47,8 +47,8 @@ export function PrList({ filter }: { filter: string }) {
 
   let body;
   if (error) body = <p className="list-message error">{error.message}</p>;
-  else if (isPending) body = <p className="list-message">Chargement…</p>;
-  else if (!items.length) body = <p className="list-message">{all.length ? 'Aucune PR ne correspond au filtre' : 'Aucune PR ouverte 🎉'}</p>;
+  else if (isPending) body = <p className="list-message">Loading…</p>;
+  else if (!items.length) body = <p className="list-message">{all.length ? 'No PR matches the filter' : 'No open PR 🎉'}</p>;
   else {
     body = (
       <div className="pr-list-wrap">
@@ -56,11 +56,11 @@ export function PrList({ filter }: { filter: string }) {
           <thead>
             <tr>
               <th scope="col">PR</th>
-              <th scope="col">Auteur</th>
-              <th scope="col">Ouverte depuis</th>
-              <th scope="col" className="num">Approbations</th>
-              <th scope="col">Statut</th>
-              <th scope="col" className="num">Taille</th>
+              <th scope="col">Author</th>
+              <th scope="col">Open for</th>
+              <th scope="col" className="num">Approvals</th>
+              <th scope="col">Status</th>
+              <th scope="col" className="num">Size</th>
               <th scope="col" aria-label="Actions" />
             </tr>
           </thead>
@@ -71,7 +71,7 @@ export function PrList({ filter }: { filter: string }) {
               <tbody key={repo} className={open ? undefined : 'collapsed'}>
                 <tr className="group">
                   <th scope="rowgroup" colSpan={7}>
-                    <button type="button" aria-expanded={open} title={open ? 'Replier' : 'Déplier'} onClick={() => toggle(repo)}>
+                    <button type="button" aria-expanded={open} title={open ? 'Collapse' : 'Expand'} onClick={() => toggle(repo)}>
                       <span className="chevron" aria-hidden="true">▾</span>
                       {repo.split('/')[1]} <span className="muted">· {prs.length}</span>
                     </button>
@@ -90,13 +90,13 @@ export function PrList({ filter }: { filter: string }) {
   }
 
   return (
-    <section className="list-view" aria-label="Liste des PRs">
+    <section className="list-view" aria-label="PR list">
       <MyActions filter={filter} refresh={refresh} pulls={all} reviews={reviews.data ?? []} />
       {data && (
         <p className="list-count">
-          {items.length} PR(s) ouverte(s)
-          {items.length < all.length && ` sur ${all.length} (filtre)`}
-          {total > all.length && ` · ${all.length} plus récentes sur ${total}`}
+          {items.length} open PR{items.length === 1 ? '' : 's'}
+          {items.length < all.length && ` of ${all.length} (filtered)`}
+          {total > all.length && ` · newest ${all.length} of ${total}`}
         </p>
       )}
       {body}

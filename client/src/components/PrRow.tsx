@@ -24,10 +24,10 @@ function detailsPollInterval(d: PrDetails | undefined, polls: number, refresh: n
 const STATUS: Record<PrStatus, [className: string, label: string]> = {
   'ci-failed': ['ko strong', 'CI FAILED'],
   draft: ['draft', 'Draft'],
-  conflict: ['ko', 'Conflit'],
-  changes: ['ko', 'Changements demandés'],
-  approved: ['ok', 'Approuvée'],
-  pending: ['wait', 'Review en attente'],
+  conflict: ['ko', 'Conflict'],
+  changes: ['ko', 'Changes requested'],
+  approved: ['ok', 'Approved'],
+  pending: ['wait', 'Review pending'],
 };
 
 /** Small 4-point star, the "Review with Claude" icon. */
@@ -37,7 +37,7 @@ function SparkIcon() {
 
 function ReviewButton({ pr, onReview }: { pr: PullRequest; onReview: (pr: PullRequest) => Promise<void> }) {
   const [busy, setBusy] = useState(false);
-  const label = `Review avec Claude : ${pr.repo}#${pr.number}`;
+  const label = `Review with Claude: ${pr.repo}#${pr.number}`;
   return (
     <button type="button" className={`btn icon${busy ? ' spinning' : ''}`} title={label} aria-label={label} disabled={busy}
       onClick={() => { setBusy(true); void onReview(pr).finally(() => setBusy(false)); }}>
@@ -49,7 +49,7 @@ function ReviewButton({ pr, onReview }: { pr: PullRequest; onReview: (pr: PullRe
 /** Shown instead of the Review button while the PR's review session runs: tells how to open it. */
 function RunningReviewButton({ review }: { review: ReviewSession }) {
   const [open, setOpen] = useState(false);
-  const label = review.state === 'waiting' ? 'Review en attente de votre réponse : ouvrir la session' : 'Review en cours : ouvrir la session';
+  const label = review.state === 'waiting' ? 'Review waiting for your answer: open the session' : 'Review running: open the session';
   return (
     <>
       <button type="button" className={`btn icon running${review.state === 'waiting' ? ' waiting' : ''}`} title={label} aria-label={label} onClick={() => setOpen(true)}>
@@ -61,7 +61,7 @@ function RunningReviewButton({ review }: { review: ReviewSession }) {
 }
 
 /**
- * One PR row. With `action`, the row belongs to "Actions pour moi": the action replaces the
+ * One PR row. With `action`, the row belongs to "Actions for me": the action replaces the
  * author (always the user) and the project name precedes the title. With `onReview`, a last
  * cell holds the "Review" button, replaced by a "running" button while `review` runs.
  */
@@ -77,7 +77,7 @@ export function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd = fa
     refetchInterval: (q) => detailsPollInterval(q.state.data, q.state.dataUpdateCount, refresh),
   });
   const status = d ? prStatus(pr, d) : pr.draft ? 'draft' : null;
-  const loading = <span className="muted" title={error ? error.message : 'Chargement…'}>{error ? '—' : '…'}</span>;
+  const loading = <span className="muted" title={error ? error.message : 'Loading…'}>{error ? '—' : '…'}</span>;
 
   const inStack = depth > 0 || stackSize > 1;
   const rowClass = inStack ? `in-stack${stackEnd ? ' stack-end' : ''}` : undefined;
@@ -86,21 +86,21 @@ export function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd = fa
     <tr data-key={pr.key} className={rowClass}>
       <td className={depth ? 'title stacked' : 'title'} style={depth ? { '--depth': Math.min(depth, MAX_INDENT) } as CSSProperties : undefined}>
         {action && <span className="row-repo">{pr.repo} </span>}
-        {parent && <span className="stack-arrow" title={`Empilée sur #${parent.number} (${pr.baseRef})`}>↳ </span>}
+        {parent && <span className="stack-arrow" title={`Stacked on #${parent.number} (${pr.baseRef})`}>↳ </span>}
         <a href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.title}>{pr.title}</a> <span className="muted">#{pr.number}</span>
-        {stackSize > 1 && <span className="stack-tag" title={`${stackSize} PRs empilées à partir de celle-ci`}>stack · {stackSize}</span>}
+        {stackSize > 1 && <span className="stack-tag" title={`${stackSize} PRs stacked from this one`}>stack · {stackSize}</span>}
       </td>
       {action ? <td className="action">{action}</td> : (
         <td className="author">
           {pr.author ? <><img src={`${pr.author.avatar}&s=32`} alt="" loading="lazy" /> {pr.author.login}</> : '—'}
         </td>
       )}
-      <td title={`Ouverte le ${new Date(pr.createdAt).toLocaleString('fr-FR')}`}>{age(pr.createdAt)}</td>
+      <td title={`Opened on ${new Date(pr.createdAt).toLocaleString('en-GB')}`}>{age(pr.createdAt)}</td>
       <td className="num">
         {d ? <span className={d.approvals >= REQUIRED_APPROVALS ? 'approvals ok' : 'approvals'}>{d.approvals}/{REQUIRED_APPROVALS}</span> : loading}
       </td>
       <td>{status ? <span className={`badge ${STATUS[status][0]}`}>{STATUS[status][1]}</span> : loading}</td>
-      <td className="num diff" title={d ? `${d.changedFiles} fichier(s)` : undefined}>
+      <td className="num diff" title={d ? `${d.changedFiles} file${d.changedFiles === 1 ? '' : 's'}` : undefined}>
         {d ? <><span className="add">+{d.additions}</span> <span className="del">−{d.deletions}</span></> : loading}
       </td>
       {onReview && (
