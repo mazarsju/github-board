@@ -23,7 +23,7 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
 - **Review with Claude** (✦ button at the end of each row of the project list): starts a **background Claude Code session** on the server's machine, named `review <project>#<number>`, that runs the user's **`/pr-review <PR URL>`** skill (in `~/.claude/skills/pr-review`). The skill reviews the PR without posting anything and saves its findings to `~/.cache/pr-review/<owner>-<repo>-<number>/findings.json`.
   - **While it runs**, the ✦ button pulses (yellow when the session waits for an answer); clicking it shows the command that opens the session in a terminal, `claude attach "review service-clm#16664"`, with a copy button. Sessions are checked every 5 seconds while one runs.
   - **Once finished**, "Actions pour moi" lists the PR with a **Synthèse review** button showing the session's final answer full screen, rendered as Markdown (GitHub flavor: tables, checklists; raw HTML is ignored, links open in a new tab), and the command to resume the conversation, `claude attach <session id>` (a finished session is no longer found by its name). **Marquer comme lue** removes it (saved with your settings); the PR can then be reviewed again. A session that ended in error is flagged **Review échouée**.
-  - **Findings**: the entry shows the count per severity (Critique, Majeur, Mineur, Nit), and each finding is stacked under it, most severe first: severity, title, `file:line`, and a `suggestion` tag when it comes with a fix. Clicking one opens its detail: the comment (Markdown), the proposed code, a link to the lines at the reviewed commit, and the `/pick-change <PR URL>` command that posts the chosen findings on GitHub.
+  - **Findings**: the entry shows the count per severity (Critique, Majeur, Mineur, Nit), and each finding is stacked under it, most severe first: severity, title, `file:line`, and a `suggestion` tag when it comes with a fix. Clicking one opens its detail, laid out like a GitHub review comment: the commented lines highlighted among their surrounding code (fetched from GitHub at the reviewed commit), the comment (Markdown), the suggested change as a diff of those lines, a link to the lines on GitHub, and the `/pick-change <PR URL>` command that posts the chosen findings on GitHub.
 - Instant filter on title, project, number and author
 - Auto refresh, API quota counter, light/dark theme
 - Shortcuts: `/` filter, `r` refresh
@@ -88,7 +88,7 @@ shared/              Code shared by frontend and backend
 server/
   src/index.ts       Entry point (environment variables)
   src/app.ts         Express REST API (/api) + serving of the built frontend
-  src/github.ts      GitHub client: REST (open PRs, PR details, repository access, quota), GraphQL (actions for me)
+  src/github.ts      GitHub client: REST (open PRs, PR details, file contents, repository access, quota), GraphQL (actions for me)
   src/store.ts       Per-user JSON persistence of the settings
   src/claude.ts      Local Claude Code CLI: starts, lists and reads the review sessions
   test/              Backend tests
@@ -97,7 +97,7 @@ client/
   src/App.tsx        Session and settings loading
   src/components/    PR list and rows, "Actions pour moi", top bar, settings dialog, login
   src/state/         Settings (React context, automatic saving)
-  src/lib/           Backend API client, formatting
+  src/lib/           Backend API client, formatting, line diff of suggestions
   test/              Frontend tests (Testing Library)
 ```
 
@@ -112,7 +112,7 @@ client/
 | `GET /api/actions` | The logged-in user's open PRs waiting for them (approved, or with unanswered discussions), via GraphQL |
 | `POST /api/pulls/:owner/:repo/:number/review` | Starts a background Claude Code session (`claude --bg`) on the server's machine; requires the `X-Github-Board: 1` header and a request from that machine |
 | `GET /api/reviews` | Review sessions of the tracked repositories (latest per PR, running or finished), from `claude agents --json --all`; same restrictions |
-| `GET /api/reviews/:id/result` | Result of a finished review session: its final answer (from its transcript), and the findings its `/pr-review` skill saved for the PR since the session started (with the reviewed commit); same restrictions |
+| `GET /api/reviews/:id/result` | Result of a finished review session: its final answer (from its transcript), and the findings its `/pr-review` skill saved for the PR since the session started, each with its code excerpt at the reviewed commit; same restrictions |
 | `GET /api/repos/access` | Token access to the tracked repositories |
 | `GET /api/rate` | Remaining GitHub quota |
 
@@ -140,6 +140,7 @@ The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every
 - Review: Claude Code must be installed and logged in on the server's machine, and must trust the folder the sessions start in (`CLAUDE_CWD`, by default the server's folder): run `claude` once in that folder and accept, otherwise the button reports "workspace not trusted". The button only works when the browser and the server run on the same machine; the server runs a fixed command (`claude --bg --name … "/pr-review <PR URL>"`, no shell, only for tracked repositories) and does not pass its GitHub token to Claude.
 - A review's synthesis is read from the session's transcript in `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR/projects/`), an internal Claude Code format that may change; `claude logs` cannot be used since it stops working once the session is stopped. Only sessions whose PR is in the list (the 100 newest open PRs) are shown.
 - Findings come from the `/pr-review` skill's `findings.json`, and are only shown when it was written after the session started (otherwise they belong to an earlier review). The skill may ask a question in the background session (findings already saved for that PR, very large diff) or wait for a permission: the ✦ button then pulses yellow, and `claude attach` lets you answer.
+- A finding's code excerpt costs 1 GitHub API call per commented file (cached per commit). It is missing when the file is over 1 MB, or when the skill's line numbers do not fit the reviewed version of the file. Code is shown without syntax highlighting.
 - Sessions are kept in memory: restarting the server logs users out (except with `GITHUB_TOKEN`).
 - The app now needs a Node server: it can no longer be published on GitHub Pages.
 - If the state is changed from two tabs at the same time, the last save wins.

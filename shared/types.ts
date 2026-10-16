@@ -107,6 +107,14 @@ export interface ReviewFinding {
   body: string;
   /** Exact replacement code for the lines, when the fix is that local. */
   suggestion: string | null;
+  /** The commented lines and their surroundings at the reviewed commit, when available. */
+  code?: CodeExcerpt | null;
+}
+
+/** Consecutive lines of a file, the first one being line `start`. */
+export interface CodeExcerpt {
+  start: number;
+  lines: string[];
 }
 
 /** What a finished review session produced. */

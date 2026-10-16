@@ -8,7 +8,7 @@ import { REPOS } from '../../shared/config.ts';
 import { appStateSchema } from '../../shared/schema.ts';
 import type { SessionInfo } from '../../shared/types.ts';
 import { claudeCli, isLoopback, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type ClaudeCli } from './claude.ts';
-import { GitHubClient, GitHubError } from './github.ts';
+import { excerpt, GitHubClient, GitHubError } from './github.ts';
 import type { StateStore } from './store.ts';
 
 export interface AppOptions {
@@ -176,12 +176,19 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     try {
       // Files are found from the CLI's own listing (transcript id, session name mapped to a
       // tracked repository), never from a client-provided path.
-      const session = (await claude.listBackground()).find((s) => s.id === id);
-      const text = session && /^[\w-]+$/.test(session.sessionId) ? await claude.readResult(session.sessionId) : null;
-      const target = session && reviewTarget(session.name, REPOS);
-      const saved = target ? await claude.readFindings(target.owner, target.repo, target.number, session.startedAt) : null;
+      const bg = (await claude.listBackground()).find((s) => s.id === id);
+      const text = bg && /^[\w-]+$/.test(bg.sessionId) ? await claude.readResult(bg.sessionId) : null;
+      const target = bg && reviewTarget(bg.name, REPOS);
+      const saved = target ? await claude.readFindings(target.owner, target.repo, target.number, bg.startedAt) : null;
       if (text === null && !saved) return void res.status(404).json({ error: 'Aucun résultat pour cette session.' });
-      res.json({ text, findings: saved?.findings ?? null, head: saved?.head ?? null });
+      // The commented code at the reviewed commit, as GitHub shows it with a review comment.
+      const { client } = session(res);
+      const findings = saved && target && saved.head ? await Promise.all(saved.findings.map(async (f) => {
+        if (!f.file || !f.line) return { ...f, code: null };
+        const lines = await client.fileLines(target.owner, target.repo, f.file, saved.head!).catch(() => null);
+        return { ...f, code: lines && excerpt(lines, f.startLine ?? f.line, f.line) };
+      })) : saved?.findings ?? null;
+      res.json({ text, findings, head: saved?.head ?? null });
     } catch (err) {
       claudeError(res, 'Résultat illisible', err);
     }

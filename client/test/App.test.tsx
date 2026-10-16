@@ -77,7 +77,8 @@ function mockBackend() {
         return json(200, { name: 'review service-clm#2', output: 'abc' });
       case '/api/reviews': return json(200, reviews);
       case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings: [
-        { id: 2, severity: 'minor', file: 'src/a b.ts', line: 12, startLine: 10, title: 'Erreur avalée', body: 'Le `catch` ignore **tout**.', suggestion: 'throw err;' },
+        { id: 2, severity: 'minor', file: 'src/a b.ts', line: 12, startLine: 10, title: 'Erreur avalée', body: 'Le `catch` ignore **tout**.', suggestion: 'try {\n  run();\n} catch (err) {\n  throw err;\n}\n',
+          code: { start: 8, lines: ['// 8', 'function f() {', 'try {', '  run();', '} catch {}', '}', '// 14'] } },
         { id: 1, severity: 'critical', file: 'src/db.ts', line: 3, startLine: null, title: 'Injection SQL', body: 'Requête concaténée.', suggestion: null },
       ] });
       case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Lancement de Claude impossible : Not logged in' });
@@ -337,7 +338,17 @@ test('the findings of a finished review are stacked under it and open their deta
   await user.click(within(first).getByRole('button'));
   const dialog = await screen.findByRole('dialog', { name: 'Erreur avalée' });
   expect(within(dialog).getByText('tout').tagName).toBe('STRONG');
-  expect(within(dialog).getByText('throw err;')).toBeInTheDocument();
+  // The commented code, lines 10 to 12 highlighted among their context.
+  const code = within(dialog).getByRole('table', { name: 'Code concerné' });
+  const rows = within(code).getAllByRole('row');
+  expect(rows.map((r) => r.textContent)).toEqual(['8// 8', '9function f() {', '10try {', '11  run();', '12} catch {}', '13}', '14// 14']);
+  expect(rows.filter((r) => r.classList.contains('marked')).map((r) => r.firstElementChild!.textContent)).toEqual(['10', '11', '12']);
+  // The suggestion as a diff of those lines.
+  const diff = within(dialog).getByRole('table', { name: 'Changement suggéré' });
+  expect(within(diff).getAllByRole('row').map((r) => `${r.className.replace('code-line ', '')} ${r.firstElementChild!.textContent}`)).toEqual([
+    'same 8', 'same 9', 'same 10', 'same 11', 'del 12', 'add ', 'add ', 'add ', 'same 13', 'same 14',
+  ]);
+  expect(within(diff).getByText('throw err;').closest('[role=row]')).toHaveClass('add');
   expect(within(dialog).getByRole('link', { name: 'src/a b.ts:10-12' }))
     .toHaveAttribute('href', 'https://github.com/DiliTrust/DT_Public_API/blob/abc1234/src/a%20b.ts#L10-L12');
   expect(within(dialog).getByText(/^\/pick-change /)).toBeInTheDocument();

@@ -22,6 +22,10 @@ class FakeClient extends GitHubClient {
   override async myActions(login: string, repos: readonly string[]) {
     return [{ login, repos }] as never;
   }
+  override async fileLines(_owner: string, _repo: string, path: string) {
+    if (path !== 'a.ts') throw new GitHubError('Not Found', 404);
+    return ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'];
+  }
   override async listOpenPRs(repos: readonly string[], limit: number) {
     if (limit === 13) throw new GitHubError('Server Error', 500);
     return { total: repos.length, items: [] };
@@ -152,7 +156,7 @@ describe('API', () => {
       readResult: async (sessionId) => { read.push(sessionId); return sessionId === 'uuid-2' ? 'LGTM' : null; },
       readFindings: async (owner, repo, number, since) => {
         found.push(`${owner}/${repo}#${number}@${since}`);
-        return number === 3 ? { findings: [finding], head: 'abc1234' } : null;
+        return number === 3 ? { findings: [finding, { ...finding, id: 2, file: 'gone.ts' }], head: 'abc1234' } : null;
       },
     };
     const { call } = await start({ envToken: 'good', claude });
@@ -163,7 +167,11 @@ describe('API', () => {
       { key: 'DiliTrust/webapp-clm#3', id: 'b1', name: 'review webapp-clm#3', running: false, state: 'done', startedAt: 1 },
       { key: 'DiliTrust/webapp-clm#4', id: 'd1', name: 'review webapp-clm#4', running: false, state: 'done', startedAt: 1 },
     ]);
-    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: { text: 'LGTM', findings: [finding], head: 'abc1234' } });
+    // Each finding comes with its code at the reviewed commit, when GitHub has it.
+    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: { text: 'LGTM', head: 'abc1234', findings: [
+      { ...finding, code: { start: 1, lines: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] } },
+      { ...finding, id: 2, file: 'gone.ts', code: null },
+    ] } });
     expect((await get('/reviews/a1/result')).status).toBe(404); // no answer yet
     expect((await get('/reviews/zz/result')).status).toBe(404); // unknown session
     // A transcript id that is not a plain id is never turned into a path.

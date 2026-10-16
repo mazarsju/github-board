@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  approvalCount, type CheckRun, ciState, GitHubClient, type MyPullNode, reviewDecision, toMyAction, unansweredCount,
+  approvalCount, type CheckRun, ciState, excerpt, GitHubClient, type MyPullNode, reviewDecision, toMyAction, unansweredCount,
 } from '../src/github.ts';
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -16,6 +16,19 @@ function mockFetch(routes: Record<string, [number, unknown]>) {
 }
 
 describe('GitHubClient', () => {
+  test('fileLines reads a file at a commit once, and refuses odd references', async () => {
+    const content = Buffer.from('line 1\nligne 2 é\nline 3').toString('base64');
+    const fetch = mockFetch({ '/repos/o/r/contents/src/a%20b.ts': [200, { encoding: 'base64', content }] });
+    const client = new GitHubClient('t');
+    expect(await client.fileLines('o', 'r', 'src/a b.ts', 'abc1234')).toEqual(['line 1', 'ligne 2 é', 'line 3']);
+    expect(await client.fileLines('o', 'r', 'src/a b.ts', 'abc1234')).toHaveLength(3);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(new URL(fetch.mock.calls[0]![0]).search).toBe('?ref=abc1234');
+    await expect(client.fileLines('o', 'r', '../secret', 'abc1234')).rejects.toMatchObject({ status: 400 });
+    await expect(client.fileLines('o', 'r', 'a.ts', 'main&x=1')).rejects.toMatchObject({ status: 400 });
+    await expect(client.fileLines('o', 'r', 'missing.ts', 'abc1234')).rejects.toMatchObject({ status: 404 });
+  });
+
   test('checkRepoAccess tells readable and inaccessible repositories apart', async () => {
     mockFetch({
       '/repos/DiliTrust/service-clm': [200, { private: true }],
@@ -254,4 +267,13 @@ describe('my actions', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: 'Bad query' }] }), { status: 200 })));
     await expect(new GitHubClient('t').myActions('me', ['o/r'])).rejects.toMatchObject({ status: 502, message: 'Bad query' });
   });
+});
+
+test('excerpt keeps the lines with some context, within the file', () => {
+  const lines = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
+  expect(excerpt(lines, 5, 6, 2)).toEqual({ start: 3, lines: ['3', '4', '5', '6', '7', '8'] });
+  expect(excerpt(lines, 1, 1)).toEqual({ start: 1, lines: ['1', '2', '3', '4'] });
+  expect(excerpt(lines, 10, 10, 3)).toEqual({ start: 7, lines: ['7', '8', '9', '10'] });
+  expect(excerpt(lines, 11, 11)).toBeNull(); // line of another version
+  expect(excerpt(lines, 4, 3)).toBeNull();
 });

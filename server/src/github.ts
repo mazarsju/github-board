@@ -1,6 +1,6 @@
 // GitHub REST API client, used server-side (the token never leaves the backend).
 import { REQUIRED_APPROVALS } from '../../shared/config.ts';
-import type { CiState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewDecision } from '../../shared/types.ts';
+import type { CiState, CodeExcerpt, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewDecision } from '../../shared/types.ts';
 
 const API = 'https://api.github.com';
 /** Pages of 100 PRs read per repository at most. */
@@ -22,6 +22,8 @@ export interface GitHubUser {
 export class GitHubClient {
   rate: RateInfo = { core: null };
   private detailsCache = new Map<string, Promise<PrDetails>>();
+  /** File contents by commit: a commit never changes. */
+  private fileCache = new Map<string, Promise<string[]>>();
   private token: string;
 
   constructor(token: string) {
@@ -63,6 +65,23 @@ export class GitHubClient {
       limit: Number(res.headers.get('x-ratelimit-limit')),
       reset: Number(res.headers.get('x-ratelimit-reset')) * 1000,
     };
+  }
+
+  /** Lines of `path` at commit `ref` (a sha). Files GitHub does not inline (over 1 MB) give no lines. */
+  fileLines(owner: string, repo: string, path: string, ref: string): Promise<string[]> {
+    if (!/^[0-9a-f]{7,40}$/.test(ref) || path.split('/').some((p) => !p || p === '.' || p === '..')) {
+      return Promise.reject(new GitHubError('Invalid file reference', 400));
+    }
+    const key = `${owner}/${repo}@${ref}:${path}`;
+    let lines = this.fileCache.get(key);
+    if (!lines) {
+      const encoded = path.split('/').map(encodeURIComponent).join('/');
+      lines = this.request<{ content?: string; encoding?: string }>(`/repos/${owner}/${repo}/contents/${encoded}?ref=${ref}`)
+        .then((f) => (f.encoding === 'base64' && f.content ? Buffer.from(f.content, 'base64').toString('utf8').split('\n') : []));
+      lines.catch(() => this.fileCache.delete(key));
+      this.fileCache.set(key, lines);
+    }
+    return lines;
   }
 
   /** GraphQL query; GraphQL errors (answered with HTTP 200) are thrown as a 502. */
@@ -375,4 +394,14 @@ export function ciState(checks: ChecksPayload | null, status: StatusPayload | nu
   if (results.includes('failure')) return 'failure';
   if (results.includes('pending')) return 'pending';
   return 'success';
+}
+
+/**
+ * Lines `from`..`to` (1-based) of a file with `context` lines around, or null when they are
+ * not in the file (e.g. a line number from another version).
+ */
+export function excerpt(lines: string[], from: number, to: number, context = 3): CodeExcerpt | null {
+  if (from < 1 || to < from || to > lines.length) return null;
+  const start = Math.max(1, from - context);
+  return { start, lines: lines.slice(start - 1, Math.min(lines.length, to + context)) };
 }

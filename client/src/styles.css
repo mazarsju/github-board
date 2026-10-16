@@ -183,7 +183,22 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .finding code { font-size: 12px; white-space: nowrap; }
 .finding-meta { display: flex; align-items: center; gap: 8px; margin: 0; }
 .finding-heading { margin: 4px 0 0; font-size: 14px; }
-.suggestion { margin: 0; padding: 10px 12px; overflow: auto; font-size: 12.5px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+dialog.wide.code { width: min(1040px, calc(100vw - 32px)); }
+/* Code of a finding and its suggested change, laid out like GitHub's diff view. */
+.code-view {
+  overflow: auto; max-height: 40vh; flex-shrink: 0; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel-2); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.code-line { display: flex; min-width: max-content; }
+.code-num { flex: 0 0 48px; padding: 0 8px; text-align: right; color: var(--muted); user-select: none; }
+.code-sign { flex: 0 0 14px; color: var(--muted); user-select: none; }
+.code-text { flex: 1; padding-right: 12px; white-space: pre; }
+.code-line.marked { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
+.code-line.marked .code-num { box-shadow: inset 3px 0 var(--yellow); }
+.code-line.del { background: color-mix(in srgb, var(--red) 16%, transparent); }
+.code-line.add { background: color-mix(in srgb, var(--green) 16%, transparent); }
+.code-line.del .code-sign { color: var(--red); }
+.code-line.add .code-sign { color: var(--green); }
 
 /* Status bar */
 .statusbar {
