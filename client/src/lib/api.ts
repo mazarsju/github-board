@@ -1,6 +1,6 @@
 // HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
-  AppState, FindingPlacement, MyAction, PrDetails, RunningSession, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
+  AppState, FindingPlacement, JiraAction, MyAction, PrDetails, RunningSession, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
 } from '../../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -67,6 +67,8 @@ export const api = {
   rate: () => request<RateInfo>('/rate'),
   /** The user's own PRs waiting for an action from them. */
   actions: () => request<MyAction[]>('/actions'),
+  /** Unresolved Jira tickets assigned to the user, mentioning them or commented by them; null without Jira. */
+  jira: () => request<JiraAction[] | null>('/jira'),
   /** Open PRs of the tracked repositories, newest first. */
   pulls: (limit: number) => request<PullList>(`/pulls?${new URLSearchParams({ limit: String(limit) })}`),
   /** Starts a background Claude Code session reviewing `pr` on the server's machine. */

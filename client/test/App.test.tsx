@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { defaultState } from '../../shared/state.ts';
-import type { AppState, MyAction, PrDetails, PullRequest, ReviewFinding, ReviewSession, RunningSession } from '../../shared/types.ts';
+import type { AppState, JiraAction, MyAction, PrDetails, PullRequest, ReviewFinding, ReviewSession, RunningSession } from '../../shared/types.ts';
 import { App } from '../src/App.tsx';
 import { ToastProvider } from '../src/components/Toast.tsx';
 
@@ -41,6 +41,7 @@ let loggedIn: boolean;
 let saved: AppState[];
 let initialState: AppState;
 let actions: MyAction[];
+let jira: JiraAction[] | null;
 let reviews: ReviewSession[];
 let findings: ReviewFinding[];
 let background: RunningSession[];
@@ -84,6 +85,7 @@ function mockBackend() {
       ]);
       case '/api/pulls': return json(200, { total: PRS.length, items: PRS });
       case '/api/actions': return json(200, actions);
+      case '/api/jira': return json(200, jira);
       case '/api/pulls/DiliTrust/service-clm/2/review':
         if (init.method !== 'POST' || new Headers(init.headers).get('X-Github-Board') !== '1') return json(403, { error: 'Denied' });
         reviews = [session('DiliTrust/service-clm#2', 'started', true)];
@@ -131,7 +133,7 @@ const row = async (title: string) => {
 };
 
 beforeEach(() => {
-  loggedIn = false; saved = []; initialState = defaultState(); actions = []; reviews = []; findings = FINDINGS(); decisions = []; background = [];
+  loggedIn = false; saved = []; initialState = defaultState(); actions = []; jira = null; reviews = []; findings = FINDINGS(); decisions = []; background = [];
   mockBackend();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -313,6 +315,44 @@ test('"Actions for me" is a quiet line when nothing waits, and follows the filte
   await user.type(screen.getByLabelText('Filter'), 'webapp');
   expect(screen.queryByRole('region', { name: 'Actions for me' })).not.toBeInTheDocument();
   expect(screen.getByText('Actions for me: nothing pending ✓')).toBeInTheDocument();
+});
+
+test('"Actions for me" lists the Jira tickets waiting for the user under the PRs, and follows the filter', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0, conflict: false, ciFailed: false }];
+  const ticket = (key: string, summary: string, extra: Partial<JiraAction>): JiraAction => ({
+    key, url: `https://x.atlassian.net/browse/${key}`, summary, status: 'In Progress', updatedAt: new Date().toISOString(),
+    assigned: false, mentioned: false, commented: false, attached: [], needsClm: false, ...extra,
+  });
+  jira = [
+    ticket('CLM-1', 'Fix the export', { assigned: true, attached: [{ key: 'PV-7', url: 'https://x.atlassian.net/browse/PV-7' }] }),
+    ticket('CLM-2', 'Slow search', { mentioned: true, commented: true }),
+    ticket('PV-9', 'Customer bug', { assigned: true, needsClm: true }),
+  ];
+  renderApp();
+
+  const section = await screen.findByRole('region', { name: 'Actions for me' });
+  const table = await within(section).findByRole('table', { name: 'Jira tickets' });
+  expect(within(section).getByRole('heading')).toHaveTextContent('Actions for me 4');
+  // Under the PRs' table.
+  expect(within(section).getAllByRole('table').at(-1)).toBe(table);
+  const assigned = within(table).getByRole('link', { name: 'Fix the export' });
+  expect(assigned).toHaveAttribute('href', 'https://x.atlassian.net/browse/CLM-1');
+  expect(within(assigned.closest('tr')!).getByText('Assigned')).toBeInTheDocument();
+  // Another project's ticket on the CLM ticket's line: its key only, opening it.
+  expect(within(assigned.closest('tr')!).getByRole('link', { name: 'PV-7' })).toHaveAttribute('href', 'https://x.atlassian.net/browse/PV-7');
+  expect(within(table).queryByText('Customer bug')?.closest('tr')).toHaveTextContent('Need CLM ticket');
+  expect(within(table).getAllByText(/^Need CLM ticket$/)).toHaveLength(1);
+  const mentioned = within(table).getByRole('link', { name: 'Slow search' }).closest('tr')!;
+  expect(within(mentioned).getByText('Mentioned')).toBeInTheDocument();
+  expect(within(mentioned).getByText('Commented')).toBeInTheDocument();
+  expect(within(mentioned).getByText('In Progress')).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText('Filter'), 'clm-2');
+  expect(within(section).getAllByRole('table')).toHaveLength(1);
+  expect(within(section).getByRole('link', { name: 'Slow search' })).toBeInTheDocument();
+  expect(within(section).queryByRole('link', { name: 'Fix the export' })).not.toBeInTheDocument();
 });
 
 test('the "Review" button of a list row starts a background Claude session', async () => {

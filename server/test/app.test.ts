@@ -7,6 +7,7 @@ import { createApp, type AppOptions } from '../src/app.ts';
 import type { BackgroundSession, ClaudeCli } from '../src/claude.ts';
 import { PlacementChanged, type PrTarget, type SavedFinding, type Skills } from '../src/skills.ts';
 import { GitHubClient, GitHubError } from '../src/github.ts';
+import { JiraClient, JiraError } from '../src/jira.ts';
 import { MemoryStore } from '../src/store.ts';
 
 /** Fake GitHub client: only the "good" token is valid. */
@@ -77,6 +78,7 @@ let server: Server | null = null;
 afterEach(() => { server?.close(); server = null; });
 
 async function start(opts: Partial<AppOptions> = {}) {
+  server?.close(); // a test starting several apps only uses the last one
   const store = new MemoryStore();
   const app = createApp({ store, createClient: (t) => new FakeClient(t), ...opts });
   server = app.listen(0);
@@ -127,6 +129,21 @@ describe('API', () => {
 
     expect((await call('/session', { method: 'DELETE' })).status).toBe(204);
     expect((await call('/state')).status).toBe(401);
+  });
+
+  test('jira: the server owner\'s tickets, only with GITHUB_TOKEN; Jira errors are a 502', async () => {
+    const tickets = [{ key: 'A-1' }];
+    const jira = { myActions: async () => tickets } as unknown as JiraClient;
+    expect((await (await start({ envToken: 'good', jira })).call('/jira')).body).toEqual(tickets);
+    expect((await (await start({ envToken: 'good' })).call('/jira')).body).toBeNull();
+    // Users logged in with their own token never see the owner's Jira.
+    const { call } = await start({ jira });
+    await call('/session', { method: 'POST', body: JSON.stringify({ token: 'good' }) });
+    expect((await call('/jira')).body).toBeNull();
+
+    const failing = { myActions: async () => { throw new JiraError('Jira: Unauthorized', 401); } } as unknown as JiraClient;
+    const res = await (await start({ envToken: 'good', jira: failing })).call('/jira');
+    expect(res).toMatchObject({ status: 502, body: { error: 'Jira: Unauthorized' } });
   });
 
   test('access check of the tracked repositories', async () => {

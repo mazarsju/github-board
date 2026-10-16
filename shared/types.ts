@@ -162,6 +162,24 @@ export interface JiraTicket {
   url: string;
 }
 
+/** An unresolved Jira ticket waiting for the user ("Actions for me"). */
+export interface JiraAction extends JiraTicket {
+  summary: string;
+  /** Status name, as shown in Jira. */
+  status: string;
+  updatedAt: string;
+  /** Assigned to the user. */
+  assigned: boolean;
+  /** A comment mentions the user. */
+  mentioned: boolean;
+  /** The user commented on it. */
+  commented: boolean;
+  /** Tickets of other projects linked to it (a JIRA_PROJECT ticket only). */
+  attached: JiraTicket[];
+  /** A ticket outside JIRA_PROJECT linked to no JIRA_PROJECT ticket. */
+  needsClm: boolean;
+}
+
 /** Status of a PR in the list, from most to least blocking. */
 export type PrStatus = 'ci-failed' | 'draft' | 'conflict' | 'changes' | 'approved' | 'pending';
 

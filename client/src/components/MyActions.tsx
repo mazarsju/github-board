@@ -1,10 +1,12 @@
 // "Actions for me", highlighted above the list: the user's own PRs waiting for them,
-// and the finished "Review" sessions, with their synthesis and findings.
+// the finished "Review" sessions, with their synthesis and findings, then the Jira tickets waiting for them.
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { JIRA_PROJECT } from '../../../shared/config.ts';
 import { matchesFilter } from '../../../shared/state.ts';
-import type { MyAction, PullRequest, ReviewSession } from '../../../shared/types.ts';
+import type { JiraAction, MyAction, PullRequest, ReviewSession } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
+import { age } from '../lib/format.ts';
 import { useAppState } from '../state/AppState.tsx';
 import { PrRow } from './PrRow.tsx';
 import { useToast } from './Toast.tsx';
@@ -28,6 +30,53 @@ function Reasons({ action: { approved, unanswered, conflict, ciFailed } }: { act
     </span>
   );
 }
+
+/** The Jira tickets waiting for the user, in their own table under the PRs. */
+function JiraTable({ tickets }: { tickets: JiraAction[] }) {
+  return (
+    <div className="pr-list-wrap">
+      <table className="pr-list" aria-label="Jira tickets">
+        <thead>
+          <tr>
+            <th scope="col">Jira</th>
+            <th scope="col">Why</th>
+            <th scope="col">Status</th>
+            <th scope="col">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tickets.map((t) => (
+            <tr key={t.key}>
+              <td>
+                <a href={t.url} target="_blank" rel="noopener noreferrer">{t.summary}</a> <span className="muted">{t.key}</span>
+                {t.attached.length > 0 && (
+                  <span className="jira-links attached" aria-label={`Attached to ${t.key}`}>
+                    {t.attached.map((a) => (
+                      <a key={a.key} className="btn small" href={a.url} target="_blank" rel="noopener noreferrer" title={`Open ${a.key} in Jira`}>{a.key}</a>
+                    ))}
+                  </span>
+                )}
+              </td>
+              <td>
+                <span className="reasons">
+                  {t.assigned && <span className="badge strong">Assigned</span>}
+                  {t.mentioned && <span className="badge wait strong" title="A comment mentions you">Mentioned</span>}
+                  {t.commented && <span className="badge" title="You commented on it">Commented</span>}
+                  {t.needsClm && <span className="badge ko strong" title={`No ${JIRA_PROJECT} ticket is linked to it`}>Need {JIRA_PROJECT} ticket</span>}
+                </span>
+              </td>
+              <td>{t.status}</td>
+              <td title={`Updated on ${new Date(t.updatedAt).toLocaleString('en-GB')}`}>{age(t.updatedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const matchesTicket = (t: JiraAction, filter: string) =>
+  !filter.trim() || [t.key, t.summary, ...t.attached.map((a) => a.key)].join(' ').toLowerCase().includes(filter.trim().toLowerCase());
 
 /** A finished review: its PR row, then one row per finding, opening its detail. */
 function ReviewEntry({ review, pr, refresh, onRead }: {
@@ -86,6 +135,12 @@ export function MyActions({ filter, refresh, pulls, reviews }: {
     queryFn: api.actions,
     refetchInterval: refresh > 0 ? refresh * 1000 : false,
   });
+  const { data: jira, error: jiraError } = useQuery({
+    queryKey: ['pulls', 'jira'],
+    queryFn: api.jira,
+    refetchInterval: refresh > 0 ? refresh * 1000 : false,
+  });
+  const tickets = (jira ?? []).filter((t) => matchesTicket(t, filter));
   const byKey = new Map(pulls.map((pr) => [pr.key, pr]));
   // Finished reviews not marked as read, for PRs still in the list.
   const syntheses = reviews
@@ -102,15 +157,19 @@ export function MyActions({ filter, refresh, pulls, reviews }: {
     }, (err: Error) => toast(`Could not stop the Claude sessions: ${err.message}`, 10_000));
   };
 
-  if (error && !syntheses.length) return <p className="my-actions-empty error">Actions for me unavailable: {error.message}</p>;
-  if (!data && !syntheses.length) return null;
+  if (error && !syntheses.length && !tickets.length) return <p className="my-actions-empty error">Actions for me unavailable: {error.message}</p>;
+  if (!data && !syntheses.length && !tickets.length) return null;
   const actions = (data ?? []).filter((a) => matchesFilter(a.pr, filter));
-  if (!actions.length && !syntheses.length) return <p className="my-actions-empty">Actions for me: nothing pending ✓</p>;
+  const prCount = actions.length + syntheses.length;
+  const jiraFailed = jiraError && <p className="muted error">Jira tickets unavailable: {jiraError.message}</p>;
+  if (!prCount && !tickets.length) {
+    return <>{jiraFailed}<p className="my-actions-empty">Actions for me: nothing pending ✓</p></>;
+  }
 
   return (
     <section className="my-actions" aria-label="Actions for me">
-      <h2>Actions for me <span className="count">{actions.length + syntheses.length}</span></h2>
-      <div className="pr-list-wrap">
+      <h2>Actions for me <span className="count">{prCount + tickets.length}</span></h2>
+      {prCount > 0 && <div className="pr-list-wrap">
         <table className="pr-list">
           <thead>
             <tr>
@@ -129,7 +188,9 @@ export function MyActions({ filter, refresh, pulls, reviews }: {
             {actions.map((a) => <PrRow key={a.pr.key} row={{ pr: a.pr, depth: 0 }} refresh={refresh} action={<Reasons action={a} />} />)}
           </tbody>
         </table>
-      </div>
+      </div>}
+      {tickets.length > 0 && <JiraTable tickets={tickets} />}
+      {jiraFailed}
     </section>
   );
 }

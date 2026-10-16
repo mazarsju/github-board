@@ -11,6 +11,7 @@ import {
   attachedSessions, claudeCli, isLoopback, isOver, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession, type ClaudeCli,
 } from './claude.ts';
 import { excerpt, GitHubClient, GitHubError } from './github.ts';
+import { JiraError, type JiraClient } from './jira.ts';
 import {
   commentBody, editName, editPrompt, parseEdit, PlacementChanged, skills as skillFiles, type PrTarget, type SavedFinding, type SavedFindings, type Skills,
 } from './skills.ts';
@@ -28,6 +29,8 @@ export interface AppOptions {
   claude?: ClaudeCli;
   /** Files and scripts of the /pr-review and /pick-change skills (replaceable in tests). */
   skills?: Skills;
+  /** Jira client, when JIRA_URL, JIRA_EMAIL and JIRA_TOKEN are set. */
+  jira?: JiraClient;
 }
 
 interface Session {
@@ -69,7 +72,7 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-export function createApp({ store, envToken, createClient = (t) => new GitHubClient(t), staticDir, claude = claudeCli(), skills = skillFiles() }: AppOptions) {
+export function createApp({ store, envToken, createClient = (t) => new GitHubClient(t), staticDir, claude = claudeCli(), skills = skillFiles(), jira }: AppOptions) {
   const app = express();
   const sessions = new Map<string, Session>(); // session id (cookie) → session
   let envSession: Promise<Session> | null = null;
@@ -148,6 +151,12 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   api.get('/actions', async (_req, res) => {
     const s = session(res);
     res.json(await s.client.myActions(s.login, REPOS));
+  });
+
+  // null when Jira is not configured. The Jira account is the server owner's: only shared with
+  // GITHUB_TOKEN, where the board is theirs too, never with users logged in with their own token.
+  api.get('/jira', async (_req, res) => {
+    res.json(jira && envToken ? await jira.myActions() : null);
   });
 
   api.get('/pulls/:owner/:repo/:number/details', async (req, res) => {
@@ -345,6 +354,8 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof z.ZodError) return void res.status(400).json({ error: 'Invalid request', issues: err.issues });
     if (err instanceof GitHubError) return void res.status(err.status >= 500 ? 502 : err.status).json({ error: err.message });
+    // A Jira 401 is not the board's session: never answer 401.
+    if (err instanceof JiraError) return void res.status(502).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: 'Internal error' });
   });

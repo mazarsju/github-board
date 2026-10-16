@@ -172,6 +172,10 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 }
 .my-actions h2 { margin: 0 0 10px; font-size: 16px; display: flex; align-items: center; gap: 8px; color: var(--accent); }
 .my-actions .count { background: var(--accent); color: #fff; border-radius: 20px; padding: 0 8px; font-size: 13px; }
+/* The Jira tickets, under the PRs. */
+.my-actions .pr-list-wrap + .pr-list-wrap { margin-top: 10px; }
+.jira-links.attached { display: inline-flex; margin-left: 8px; vertical-align: middle; }
+.my-actions > .error { margin-top: 8px; font-size: 13px; }
 .my-actions-empty { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
 .pr-list .row-repo { color: var(--muted); font-size: 12px; }
 .pr-list .reasons { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }

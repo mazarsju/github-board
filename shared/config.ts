@@ -6,5 +6,8 @@ export const REPOS: readonly string[] = [
   'DiliTrust/webapp-clm',
 ];
 
+/** Jira project whose tickets "Actions for me" lists; other projects' tickets are shown attached to them. */
+export const JIRA_PROJECT = 'CLM';
+
 /** Number of approvals a PR needs to be mergeable. */
 export const REQUIRED_APPROVALS = 2;

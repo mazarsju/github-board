@@ -13,6 +13,9 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
   - **N unanswered comments**: unresolved review threads whose last comment is someone else's (outdated threads, whose code has changed since, are taken as addressed), plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
 
   These PRs also stay in their project below. Finished reviews (see "Review with Claude") are listed here too.
+  - **Jira tickets**, in their own table under the PRs (with `JIRA_URL`, `JIRA_EMAIL` and `JIRA_TOKEN` set, and `GITHUB_TOKEN`): your unresolved tickets (status category not "Done"), most recently updated first, tagged **Assigned** (assigned to you), **Mentioned** (a comment mentions you) and/or **Commented** (you commented on it), with their status and time since their last update. The title opens the ticket in Jira; the filter also applies to the keys and title.
+    - One line per **CLM** ticket (`JIRA_PROJECT` in [`shared/config.ts`](shared/config.ts)). The tickets of other projects (`PV-…`) linked to it (any issue link, or its parent) are shown on its line as buttons labeled with their key, opening them in Jira. One of your other projects' tickets is shown on the line of each CLM ticket linked to it, even when that CLM ticket is not yours; its tags then add up to the line's.
+    - One of your other projects' tickets linked to no CLM ticket gets its own line, tagged **Need CLM ticket**.
 - **PR list**, grouped by project under a separator (in the order of `REPOS`, with the number of PRs; projects without open PRs are hidden), ordered by **review readiness** within each project (see below). Click a separator to **collapse / expand** its project; the choice is saved with your settings, and a collapsed project does not load its PRs' details. One row per PR with:
   - title (link to GitHub) and number
   - author
@@ -73,6 +76,9 @@ yarn start   # the backend serves the API and the built frontend on http://127.0
 | `GITHUB_TOKEN` | — | Token used by the server. When set, no login is asked (for local use only: anyone reaching the server uses it). |
 | `HOST` / `PORT` | `127.0.0.1` / `3001` | Backend listen address. |
 | `CLAUDE_BIN` | `claude` | Claude Code executable started by the Review button (full path if it is not in the server's `PATH`). |
+| `JIRA_URL` | — | Jira Cloud site, e.g. `https://acme.atlassian.net`. With `JIRA_EMAIL` and `JIRA_TOKEN`, "Actions for me" lists your Jira tickets (only with `GITHUB_TOKEN`: the Jira account is the server owner's). |
+| `JIRA_EMAIL` | — | Email of the Jira account. |
+| `JIRA_TOKEN` | — | Jira API token of that account ([create one](https://id.atlassian.com/manage-profile/security/api-tokens)). Never sent to the browser. |
 | `CLAUDE_CWD` | server's folder | Folder in which Review sessions start. |
 | `DATA_FILE` | `server/data/state.json` | JSON file of each GitHub user's settings (theme, refresh interval, collapsed projects, reviews marked as read). |
 
@@ -99,6 +105,7 @@ server/
   src/index.ts       Entry point (environment variables)
   src/app.ts         Express REST API (/api) + serving of the built frontend
   src/github.ts      GitHub client: REST (open PRs, PR details, file contents, repository access, quota), GraphQL (actions for me)
+  src/jira.ts        Jira Cloud client: the tickets waiting for you (actions for me)
   src/store.ts       Per-user JSON persistence of the settings
   src/claude.ts      Local Claude Code CLI: starts, lists, reads and stops the review (and finding edit) sessions
   src/skills.ts      Files and scripts of the /pr-review and /pick-change skills: findings, decisions, posting
@@ -119,6 +126,7 @@ client/
 | `POST /api/session` · `GET` · `DELETE` | Log in with a token, current session, log out |
 | `GET /api/state` · `PUT` | Read / save the user's settings |
 | `GET /api/pulls?limit=` | Open PRs of the tracked repositories with their base and head branches, newest first (`limit` newest, default 100) |
+| `GET /api/jira` | Your unresolved Jira tickets that are assigned to you, mention you in a comment or that you commented on (`null` when Jira is not configured, or without `GITHUB_TOKEN`); Jira errors are a 502 |
 | `GET /api/pulls/:owner/:repo/:number/details?updatedAt=` | Reviews (decision and approval count), diff size, mergeability and CI state of a PR (cached) |
 | `GET /api/actions` | The logged-in user's open PRs waiting for them (approved, unanswered discussions, conflict or failed CI), via GraphQL and the PR details |
 | `POST /api/pulls/:owner/:repo/:number/review` | Starts a background Claude Code session (`claude --bg`) on the server's machine; requires the `X-Github-Board: 1` header and a request from that machine |
@@ -151,6 +159,7 @@ The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every
 
 - The list shows at most the 100 most recently opened PRs across the tracked repositories (each costs ~5 API calls for its details); the counter above it says when there are more. A stack whose oldest PRs fall outside these 100 is shown from the first listed PR.
 - "Actions for me" reads up to 100 of your open PRs, 100 review threads and the last 100 comments and reviews of each. A reply does not count as an answer when it is a separate PR comment while the question is in a review thread: resolve the thread, or reply in it.
+- Jira tickets: the first 100 unresolved tickets that are assigned to you, that you watch (commenting makes you a watcher by default) or whose comments contain your display name are read, then kept when assigned to you or when one of their comments is yours or mentions you. A ticket where you were mentioned, but that you neither watch nor see your name in its comments' text, is missed. Only Jira Cloud (API token with Basic auth) is supported.
 - Stacks are computed on the filtered list: a PR whose parent does not match the filter is shown on its own.
 - Approvals, status and size cost 5 GitHub API calls per PR (PR, reviews, check runs, commit statuses, workflow runs), cached until the PR changes.
 - A CI finishing does not change the PR itself: while a PR's CI is running, its details are fetched again at each refresh (auto refresh interval), so a failure shows up at the latest one refresh later.
