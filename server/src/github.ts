@@ -178,9 +178,11 @@ export class GitHubClient {
     ]);
     // CI of the PR's head commit: check runs (GitHub Actions…) and classic commit statuses.
     const sha = pull.head.sha;
-    const [checks, status] = await Promise.all([
+    const [checks, status, workflows] = await Promise.all([
       this.request<ChecksPayload>(`${base}/commits/${sha}/check-runs?per_page=100`).catch(() => null),
       this.request<StatusPayload>(`${base}/commits/${sha}/status`).catch(() => null),
+      // Tells which workflow runs were replaced by a newer run (see supersededSuites).
+      this.request<WorkflowRunsPayload>(`${base}/actions/runs?head_sha=${sha}&per_page=100`).catch(() => null),
     ]);
     return {
       additions: pull.additions,
@@ -189,7 +191,7 @@ export class GitHubClient {
       mergeableState: pull.mergeable_state,
       review: reviewDecision(reviews),
       approvals: approvalCount(reviews),
-      ci: ciState(checks, status),
+      ci: ciState(checks, status, workflows),
     };
   }
 }
@@ -224,8 +226,21 @@ export interface CheckRun {
   id: number;
   name: string;
   app?: { id: number } | null;
+  /** For GitHub Actions, one check suite per workflow run. */
+  check_suite?: { id: number } | null;
   status: string;
   conclusion: string | null;
+}
+
+export interface WorkflowRun {
+  id: number;
+  workflow_id: number;
+  event: string;
+  check_suite_id: number;
+}
+
+export interface WorkflowRunsPayload {
+  workflow_runs: WorkflowRun[];
 }
 
 export interface ChecksPayload {
@@ -375,6 +390,24 @@ export function approvalCount(reviews: ReviewPayload[] | null): number {
 const FAILED = ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'];
 
 /**
+ * Check suites of the workflow runs replaced by a newer run of the same workflow, for the same
+ * event: e.g. a run cancelled by concurrency when the workflow started again. GitHub only shows
+ * the latest run of each workflow; a replaced run's checks (its "CI result" summary failing
+ * because its jobs were cancelled) must not count, even when the newer run has not created
+ * the same checks yet.
+ */
+export function supersededSuites(runs: WorkflowRun[]): Set<number> {
+  const latest = new Map<string, WorkflowRun>();
+  for (const run of runs) {
+    const key = `${run.workflow_id}/${run.event}`;
+    const seen = latest.get(key);
+    if (!seen || run.id > seen.id) latest.set(key, run);
+  }
+  const kept = new Set([...latest.values()].map((r) => r.check_suite_id));
+  return new Set(runs.map((r) => r.check_suite_id).filter((id) => !kept.has(id)));
+}
+
+/**
  * Latest run of each check (same name, same app). A commit keeps the runs of every workflow
  * execution, e.g. a cancelled run followed by a successful re-run: only the latest one counts,
  * as on GitHub's PR page. Run ids grow over time.
@@ -390,9 +423,11 @@ function latestRuns(runs: CheckRun[]): CheckRun[] {
 }
 
 /** Combines check runs and classic commit statuses → success / failure / pending / none. */
-export function ciState(checks: ChecksPayload | null, status: StatusPayload | null): CiState {
+export function ciState(checks: ChecksPayload | null, status: StatusPayload | null, workflows: WorkflowRunsPayload | null = null): CiState {
   const results: string[] = [];
-  for (const run of latestRuns(checks?.check_runs ?? [])) {
+  const superseded = supersededSuites(workflows?.workflow_runs ?? []);
+  const current = (checks?.check_runs ?? []).filter((run) => !superseded.has(run.check_suite?.id ?? -1));
+  for (const run of latestRuns(current)) {
     if (run.status !== 'completed') results.push('pending');
     else if (FAILED.includes(run.conclusion ?? '')) results.push('failure');
     else results.push('success');

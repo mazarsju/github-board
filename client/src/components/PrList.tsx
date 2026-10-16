@@ -9,7 +9,7 @@ import { useToast } from './Toast.tsx';
 import { MyActions } from './MyActions.tsx';
 import { PrRow } from './PrRow.tsx';
 
-/** Number of PRs shown: the newest ones across the tracked repositories (each costs ~4 API calls for its details). */
+/** Number of PRs shown: the newest ones across the tracked repositories (each costs ~5 API calls for its details). */
 const LIMIT = 100;
 /** How often review sessions are checked while one of them runs. */
 const RUNNING_REVIEW_POLL_MS = 5_000;

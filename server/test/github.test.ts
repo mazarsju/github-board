@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  approvalCount, type CheckRun, ciState, excerpt, GitHubClient, type MyPullNode, reviewDecision, toMyAction, unansweredCount,
+  approvalCount, type CheckRun, ciState, excerpt, supersededSuites, GitHubClient, type MyPullNode, reviewDecision, toMyAction, unansweredCount,
 } from '../src/github.ts';
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -116,9 +116,9 @@ describe('GitHubClient', () => {
     const d = await client.getDetails('o', 'r', 1, 'v1');
     expect(d).toEqual({ additions: 3, deletions: 1, changedFiles: 2, mergeableState: 'dirty', review: 'approved', approvals: 1, ci: 'failure' });
     await client.getDetails('o', 'r', 1, 'v1');
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(5);
     await client.getDetails('o', 'r', 1, 'v2');
-    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(fetch).toHaveBeenCalledTimes(10);
   });
 
   test('getDetails does not cache a mergeability GitHub has not computed yet', async () => {
@@ -126,7 +126,7 @@ describe('GitHubClient', () => {
     const client = new GitHubClient('t');
     expect((await client.getDetails('o', 'r', 1, 'v1')).mergeableState).toBe('unknown');
     await client.getDetails('o', 'r', 1, 'v1');
-    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(fetch).toHaveBeenCalledTimes(10);
   });
 
   test('getDetails does not cache a running CI, whose completion does not change updatedAt', async () => {
@@ -134,7 +134,7 @@ describe('GitHubClient', () => {
     const client = new GitHubClient('t');
     expect((await client.getDetails('o', 'r', 1, 'v1')).ci).toBe('pending');
     await client.getDetails('o', 'r', 1, 'v1');
-    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(fetch).toHaveBeenCalledTimes(10);
   });
 
   test('getDetails tolerates unreadable CI endpoints', async () => {
@@ -168,6 +168,17 @@ describe('approvalCount', () => {
   });
 });
 
+test('supersededSuites keeps the latest run of each workflow and event', () => {
+  expect(supersededSuites([
+    { id: 10, workflow_id: 1, event: 'pull_request', check_suite_id: 100 },
+    { id: 12, workflow_id: 1, event: 'pull_request', check_suite_id: 200 },
+    { id: 11, workflow_id: 1, event: 'pull_request', check_suite_id: 150 },
+    { id: 13, workflow_id: 1, event: 'push', check_suite_id: 300 }, // another event: shown too
+    { id: 14, workflow_id: 2, event: 'pull_request', check_suite_id: 400 },
+  ])).toEqual(new Set([100, 150]));
+  expect(supersededSuites([])).toEqual(new Set());
+});
+
 describe('ciState', () => {
   test('combines check runs and commit statuses', () => {
     expect(ciState(null, null)).toBe('none');
@@ -193,6 +204,25 @@ describe('ciState', () => {
       { id: 1, name: 'build', app: { id: 1 }, status: 'completed', conclusion: 'failure' },
       { id: 2, name: 'build', app: { id: 2 }, status: 'completed', conclusion: 'success' },
     ] }, null)).toBe('failure');
+    // A workflow run replaced by a newer one (cancelled by concurrency) does not count, even for
+    // checks the newer run has not created yet (its "CI result" summary comes last).
+    const replaced = { check_runs: [
+      { id: 1, name: 'CI result', app: { id: 1 }, check_suite: { id: 100 }, status: 'completed', conclusion: 'failure' },
+      { id: 2, name: 'Test ${{ matrix.package }}', app: { id: 1 }, check_suite: { id: 100 }, status: 'completed', conclusion: 'cancelled' },
+      { id: 3, name: 'Lint', app: { id: 1 }, check_suite: { id: 200 }, status: 'completed', conclusion: 'success' },
+      { id: 4, name: 'Test clm-api', app: { id: 1 }, check_suite: { id: 200 }, status: 'in_progress', conclusion: null },
+      { id: 5, name: 'check-pr-size', app: { id: 1 }, check_suite: { id: 300 }, status: 'completed', conclusion: 'success' },
+    ] };
+    const workflows = { workflow_runs: [
+      { id: 10, workflow_id: 1, event: 'pull_request', check_suite_id: 100 },
+      { id: 11, workflow_id: 1, event: 'pull_request', check_suite_id: 200 },
+      { id: 12, workflow_id: 2, event: 'pull_request', check_suite_id: 300 },
+    ] };
+    expect(ciState(replaced, null)).toBe('failure'); // without the workflow runs, as before
+    expect(ciState(replaced, null, workflows)).toBe('pending');
+    // Once the newer run is over, its own result decides.
+    replaced.check_runs.push({ id: 6, name: 'CI result', app: { id: 1 }, check_suite: { id: 200 }, status: 'completed', conclusion: 'failure' });
+    expect(ciState(replaced, null, workflows)).toBe('failure');
     // Without any classic status, the combined "pending" state is ignored.
     expect(ciState({ check_runs: [] }, { state: 'pending', statuses: [] })).toBe('none');
   });

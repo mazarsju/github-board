@@ -30,7 +30,7 @@ export function LoginPage({ onLogin }: { onLogin: (s: SessionInfo) => void }) {
         <input type="password" id="tokenInput" value={token} onChange={(e) => setToken(e.target.value)}
           placeholder="ghp_… or github_pat_…" autoComplete="off" />
         <p className="hint">
-          Required scope: <code>repo</code> (classic) or read access to <em>Pull requests</em>, <em>Commit statuses</em> and <em>Checks</em> (fine-grained).
+          Required scope: <code>repo</code> (classic) or read access to <em>Pull requests</em>, <em>Commit statuses</em>, <em>Checks</em> and <em>Actions</em> (fine-grained).
           The token is kept by the Github Board server for the session (never in the browser).{' '}
           To skip this step, set <code>GITHUB_TOKEN</code> in <code>.env</code>.{' '}
           <a href="https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board" target="_blank" rel="noopener noreferrer">Create a token</a>

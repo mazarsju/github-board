@@ -18,7 +18,7 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
   - author
   - time since the PR was opened (`45 min`, `5 h`, `3 d`, `2 w`, `4 mo`, `1 y`; full date on hover)
   - approvals out of the number required to merge (`1/2`; the threshold is `REQUIRED_APPROVALS` in `shared/config.ts`, currently **2**)
-  - status, the most blocking one winning: **CI FAILED** (a check or commit status of the last commit failed — failed, timed out, cancelled, action required; only the latest run of each check counts, so a successful re-run clears an earlier failure) › **Draft** › **Conflict** (merge conflict) › **Changes requested** › **Approved** (required approvals reached) › **Review pending**
+  - status, the most blocking one winning: **CI FAILED** (a check or commit status of the last commit failed — failed, timed out, cancelled, action required; only the latest run of each workflow, and the latest run of each check, count — as on GitHub's PR page: a successful re-run clears an earlier failure, and a run cancelled because the workflow started again does not count, even before the newer run reports its own result) › **Draft** › **Conflict** (merge conflict) › **Changes requested** › **Approved** (required approvals reached) › **Review pending**
   - change size (`+added −deleted` lines; number of files on hover)
 - **Stacked PRs** are kept together: a PR whose base branch is the branch of another open PR of the same project is listed right under it, indented (↳, with the parent PR on hover), and the first PR of the stack shows `stack · N`. A stack is placed where its newest PR would be; a PR with several stacked PRs forms a tree, oldest child first.
 - **Review with Claude** (✦ button at the end of each row of the project list): starts a **background Claude Code session** on the server's machine, named `review <project>#<number>`, that runs the user's **`/pr-review <PR URL>`** skill (in `~/.claude/skills/pr-review`). The skill reviews the PR without posting anything and saves its findings to `~/.cache/pr-review/<owner>-<repo>-<number>/findings.json`.
@@ -76,7 +76,7 @@ yarn start   # the backend serves the API and the built frontend on http://127.0
 Create a [Personal Access Token](https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board):
 
 - **Classic**: `repo` scope (or `public_repo` if you only track public repositories)
-- **Fine-grained**: read access to *Pull requests*, *Commit statuses* and *Checks* on the relevant repositories
+- **Fine-grained**: read access to *Pull requests*, *Commit statuses*, *Checks* and *Actions* on the relevant repositories (without *Actions*, runs replaced by a newer run of their workflow may show as **CI FAILED**)
 
 The tracked repositories are **private** and belong to the DiliTrust organisation, so the token must have access to them; if the organisation enforces SAML SSO, authorise the token for DiliTrust (**Configure SSO → Authorize** in the token list). Otherwise, a warning banner lists the inaccessible repositories (their PRs are left out of the list).
 
@@ -141,10 +141,10 @@ The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every
 
 ## Known limitations
 
-- The list shows at most the 100 most recently opened PRs across the tracked repositories (each costs ~4 API calls for its details); the counter above it says when there are more. A stack whose oldest PRs fall outside these 100 is shown from the first listed PR.
+- The list shows at most the 100 most recently opened PRs across the tracked repositories (each costs ~5 API calls for its details); the counter above it says when there are more. A stack whose oldest PRs fall outside these 100 is shown from the first listed PR.
 - "Actions for me" reads up to 100 of your open PRs, 100 review threads and the last 100 comments and reviews of each. A reply does not count as an answer when it is a separate PR comment while the question is in a review thread: resolve the thread, or reply in it.
 - Stacks are computed on the filtered list: a PR whose parent does not match the filter is shown on its own.
-- Approvals, status and size cost 4 GitHub API calls per PR (PR, reviews, check runs, commit statuses), cached until the PR changes.
+- Approvals, status and size cost 5 GitHub API calls per PR (PR, reviews, check runs, commit statuses, workflow runs), cached until the PR changes.
 - A CI finishing does not change the PR itself: while a PR's CI is running, its details are fetched again at each refresh (auto refresh interval), so a failure shows up at the latest one refresh later.
 - GitHub computes mergeability lazily: right after a push, a conflict may only show up after a few seconds (the app checks again automatically).
 - Review: Claude Code must be installed and logged in on the server's machine, and must trust the folder the sessions start in (`CLAUDE_CWD`, by default the server's folder): run `claude` once in that folder and accept, otherwise the button reports "workspace not trusted". The button only works when the browser and the server run on the same machine; the server runs a fixed command (`claude --bg --name … "/pr-review <PR URL>"`, no shell, only for tracked repositories) and does not pass its GitHub token to Claude.
