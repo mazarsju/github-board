@@ -188,7 +188,7 @@ describe('ciState', () => {
 describe('my actions', () => {
   const user = (login: string) => ({ __typename: 'User', login });
   const bot = (login: string) => ({ __typename: 'Bot', login });
-  const thread = (last: { __typename: string; login: string }, isResolved = false) => ({ isResolved, comments: { nodes: [{ author: last }] } });
+  const thread = (last: { __typename: string; login: string }, isResolved = false, isOutdated = false) => ({ isResolved, isOutdated, comments: { nodes: [{ author: last }] } });
   const node = (extra: Partial<MyPullNode> = {}): MyPullNode => ({
     number: 7, title: 'T', url: 'u', isDraft: false, createdAt: 'c', updatedAt: 'u',
     repository: { nameWithOwner: 'o/r' }, author: { login: 'me', avatarUrl: 'a' },
@@ -197,11 +197,12 @@ describe('my actions', () => {
     ...extra,
   });
 
-  test('unanswered review threads: unresolved, last comment by another person', () => {
+  test('unanswered review threads: unresolved, still on the current code, last comment by another person', () => {
     expect(unansweredCount(node({ reviewThreads: { nodes: [
       thread(user('bob')), // waiting for me
       thread(user('me')), // I answered last
       thread(user('bob'), true), // resolved
+      thread(user('bob'), false, true), // outdated: the commented code changed since
       thread(bot('coderabbitai')), // bots are ignored
     ] } }), 'me')).toBe(1);
   });

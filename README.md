@@ -9,7 +9,7 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
 - **Tracked repositories**: defined in [`shared/config.ts`](shared/config.ts) (`REPOS`), currently `DiliTrust/service-clm`, `DiliTrust/DT_Public_API` and `DiliTrust/webapp-clm`. A banner flags any repository the token cannot read.
 - **Actions pour moi**: a highlighted block above the list with your own open PRs that wait for you (a quiet line when there are none):
   - **À merger**: the PR reached the required approvals
-  - **N commentaire(s) sans réponse**: unresolved review threads whose last comment is someone else's, plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
+  - **N commentaire(s) sans réponse**: unresolved review threads whose last comment is someone else's (outdated threads, whose code has changed since, are taken as addressed), plus the conversation (PR comments and the text of "comment" / "changes requested" reviews) when its last message is someone else's. Bots such as CodeRabbit are ignored.
 
   These PRs also stay in their project below. Finished reviews (see "Review with Claude") are listed here too.
 - **PR list**, grouped by project under a separator (in the order of `REPOS`, with the number of PRs; projects without open PRs are hidden), newest first within each project. Click a separator to **collapse / expand** its project; the choice is saved with your settings, and a collapsed project does not load its PRs' details. One row per PR with:

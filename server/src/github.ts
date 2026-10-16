@@ -241,7 +241,7 @@ const MY_PULLS_QUERY = `query($q: String!) {
         baseRefName headRefName
         headRepository { nameWithOwner }
         latestOpinionatedReviews(first: 100) { nodes { state } }
-        reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { author { __typename login } } } } }
+        reviewThreads(first: 100) { nodes { isResolved isOutdated comments(last: 1) { nodes { author { __typename login } } } } }
         comments(last: 100) { nodes { createdAt author { __typename login } } }
         reviews(last: 100) { nodes { state body submittedAt author { __typename login } } }
       }
@@ -267,7 +267,7 @@ export interface MyPullNode {
   headRefName: string;
   headRepository: { nameWithOwner: string } | null;
   latestOpinionatedReviews: { nodes: { state: string }[] };
-  reviewThreads: { nodes: { isResolved: boolean; comments: { nodes: { author: GqlAuthor | null }[] } }[] };
+  reviewThreads: { nodes: { isResolved: boolean; isOutdated: boolean; comments: { nodes: { author: GqlAuthor | null }[] } }[] };
   comments: { nodes: { createdAt: string; author: GqlAuthor | null }[] };
   reviews: { nodes: { state: string; body: string; submittedAt: string | null; author: GqlAuthor | null }[] };
 }
@@ -278,11 +278,12 @@ const isOtherHuman = (a: GqlAuthor | null, me: string): a is GqlAuthor =>
 
 /**
  * Discussions of a PR whose last word is someone else's: each unresolved review thread whose
- * last comment is not `me`'s, plus 1 when the conversation (PR comments and the text of
+ * last comment is not `me`'s, unless outdated (the commented code has changed since: taken as
+ * addressed), plus 1 when the conversation (PR comments and the text of
  * "comment" / "changes requested" reviews) ends with someone else's message. Bots are ignored.
  */
 export function unansweredCount(node: Pick<MyPullNode, 'reviewThreads' | 'comments' | 'reviews'>, me: string): number {
-  const threads = node.reviewThreads.nodes.filter((t) => !t.isResolved && isOtherHuman(t.comments.nodes[0]?.author ?? null, me)).length;
+  const threads = node.reviewThreads.nodes.filter((t) => !t.isResolved && !t.isOutdated && isOtherHuman(t.comments.nodes[0]?.author ?? null, me)).length;
   const conversation = [
     ...node.comments.nodes.map((c) => ({ at: c.createdAt, author: c.author })),
     ...node.reviews.nodes
