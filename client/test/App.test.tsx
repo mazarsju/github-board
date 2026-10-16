@@ -242,16 +242,17 @@ test('a group saved as collapsed starts collapsed and does not load its PR detai
   expect(calls.some((u) => u.includes('/pulls/DiliTrust/DT_Public_API/'))).toBe(true);
 });
 
-test('"Actions for me" lists the user\'s PRs to merge or with unanswered comments, above the list', async () => {
+test('"Actions for me" lists the user\'s PRs to merge, with unanswered comments, a conflict or a failed CI, above the list', async () => {
   loggedIn = true;
   actions = [
-    { pr: PRS[1]!, approved: true, unanswered: 0 },
-    { pr: PRS[2]!, approved: false, unanswered: 3 },
+    { pr: PRS[1]!, approved: true, unanswered: 0, conflict: false, ciFailed: false },
+    { pr: PRS[2]!, approved: false, unanswered: 3, conflict: false, ciFailed: false },
+    { pr: PRS[0]!, approved: false, unanswered: 0, conflict: true, ciFailed: true },
   ];
   renderApp();
 
   const section = await screen.findByRole('region', { name: 'Actions for me' });
-  expect(within(section).getByRole('heading')).toHaveTextContent('Actions for me 2');
+  expect(within(section).getByRole('heading')).toHaveTextContent('Actions for me 3');
   const toMerge = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
   expect(within(toMerge).getByText('DT_Public_API')).toBeInTheDocument(); // project before the title
   expect(within(toMerge).getByText('Ready to merge')).toBeInTheDocument();
@@ -259,6 +260,10 @@ test('"Actions for me" lists the user\'s PRs to merge or with unanswered comment
   const toAnswer = within(section).getByRole('link', { name: 'PR de webapp-clm' }).closest('tr')!;
   expect(within(toAnswer).getByText('3 unanswered comments')).toBeInTheDocument();
   expect(within(toAnswer).queryByText('carol')).not.toBeInTheDocument(); // the action replaces the author
+  const broken = within(section).getByRole('link', { name: PRS[0]!.title }).closest('tr')!;
+  const reasons = broken.querySelector<HTMLElement>('.reasons')!;
+  expect(within(reasons).getByText('Conflict')).toBeInTheDocument();
+  expect(within(reasons).getByText('CI FAILED')).toBeInTheDocument();
 
   // Shown before the PR list, which still lists the same PRs in their project.
   const list = screen.getByRole('region', { name: 'PR list' });
@@ -269,7 +274,7 @@ test('"Actions for me" lists the user\'s PRs to merge or with unanswered comment
 test('"Actions for me" is a quiet line when nothing waits, and follows the filter', async () => {
   loggedIn = true;
   const user = userEvent.setup();
-  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0 }];
+  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0, conflict: false, ciFailed: false }];
   renderApp();
 
   await screen.findByRole('region', { name: 'Actions for me' });
@@ -281,7 +286,7 @@ test('"Actions for me" is a quiet line when nothing waits, and follows the filte
 test('the "Review" button of a list row starts a background Claude session', async () => {
   loggedIn = true;
   const user = userEvent.setup();
-  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0 }];
+  actions = [{ pr: PRS[1]!, approved: true, unanswered: 0, conflict: false, ciFailed: false }];
   renderApp();
 
   await user.click(within(await row('Refonte service')).getByRole('button', { name: 'Review with Claude: service-clm#2' }));
@@ -410,7 +415,11 @@ test('approving a finding shows the exact comment and where it lands, and posts 
   expect(decisions).toEqual(['post 1 {"mode":"inline","body":"**critical**: Injection SQL"}']);
   expect(await within(dialog).findByRole('link', { name: 'See the comment' })).toHaveAttribute('href', 'https://github.com/c/2');
   expect(within(dialog).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
-  expect(within(within(section).getByRole('button', { name: /Injection SQL/ })).getByText('posted')).toBeInTheDocument();
+  // The posted finding leaves the list; the detail stays open to show the link.
+  await waitFor(() => expect(within(section).queryByRole('button', { name: /Injection SQL/ })).not.toBeInTheDocument());
+  expect(within(section).getByRole('button', { name: /Erreur avalée/ })).toBeInTheDocument();
+  await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(within(section).queryByText('All findings handled')).not.toBeInTheDocument();
 });
 
 test('rejecting a finding removes it from the list', async () => {
@@ -422,6 +431,10 @@ test('rejecting a finding removes it from the list', async () => {
   expect(decisions).toEqual(['reject 1']);
   await waitFor(() => expect(within(section).queryByText('Injection SQL')).not.toBeInTheDocument());
   expect(within(section).getByText('Erreur avalée')).toBeInTheDocument();
+  // Once every finding is decided, the entry says so.
+  await user.click(within(section).getByRole('button', { name: /Erreur avalée/ }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Erreur avalée' })).getByRole('button', { name: 'Reject' }));
+  expect(await within(section).findByText('All findings handled')).toBeInTheDocument();
 });
 
 test('editing a finding sends the request to Claude, then waits for the new version', async () => {

@@ -233,6 +233,13 @@ describe('my actions', () => {
     expect(unansweredCount(node({ comments: comments(['1', user('me')]), reviews: { nodes: [review('COMMENTED', '  ', '2')] } }), 'me')).toBe(0);
   });
 
+  test('toMyAction keeps PRs with a conflict or a failed CI', () => {
+    expect(toMyAction(node(), 'me', { mergeableState: 'clean', ci: 'pending' })).toBeNull();
+    expect(toMyAction(node(), 'me', null)).toBeNull(); // details unavailable
+    expect(toMyAction(node(), 'me', { mergeableState: 'dirty', ci: 'success' })).toMatchObject({ conflict: true, ciFailed: false });
+    expect(toMyAction(node(), 'me', { mergeableState: 'blocked', ci: 'failure' })).toMatchObject({ conflict: false, ciFailed: true });
+  });
+
   test('toMyAction keeps approved PRs and PRs with unanswered discussions', () => {
     const approvals = (n: number) => ({ latestOpinionatedReviews: { nodes: Array.from({ length: n }, () => ({ state: 'APPROVED' })) } });
     expect(toMyAction(node(approvals(1)), 'me')).toBeNull();
@@ -240,7 +247,7 @@ describe('my actions', () => {
     expect(toMyAction(node(approvals(2)), 'me')).toMatchObject({ approved: true, unanswered: 0 });
     const action = toMyAction(node({ reviewThreads: { nodes: [thread(user('bob'))] }, headRepository: { nameWithOwner: 'fork/r' } }), 'me');
     expect(action).toEqual({
-      approved: false, unanswered: 1,
+      approved: false, unanswered: 1, conflict: false, ciFailed: false,
       pr: {
         key: 'o/r#7', owner: 'o', repo: 'r', number: 7, title: 'T', url: 'u', draft: false,
         author: { login: 'me', avatar: 'a' }, baseRef: 'develop', headRef: null, createdAt: 'c', updatedAt: 'u',
@@ -249,14 +256,24 @@ describe('my actions', () => {
   });
 
   test('myActions searches the user\'s open PRs in the tracked repositories through GraphQL', async () => {
-    const fetch = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ data: { search: { nodes: [
-      node({ number: 1, latestOpinionatedReviews: { nodes: [{ state: 'APPROVED' }, { state: 'APPROVED' }] } }),
-      node({ number: 2 }), // nothing to do
-      {}, // non-PR search result
-    ] } } }), { status: 200 }));
+    const answer = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+    const fetch = vi.fn(async (url: string, _init: RequestInit) => {
+      const { pathname } = new URL(url);
+      if (pathname === '/graphql') return answer({ data: { search: { nodes: [
+        node({ number: 1, latestOpinionatedReviews: { nodes: [{ state: 'APPROVED' }, { state: 'APPROVED' }] } }),
+        node({ number: 2 }), // nothing to do
+        node({ number: 3 }), // conflict, from its details
+        {}, // non-PR search result
+      ] } } });
+      const pull = /^\/repos\/o\/r\/pulls\/(\d+)$/.exec(pathname);
+      if (pull) return answer({ head: { sha: `sha${pull[1]}` }, mergeable_state: pull[1] === '3' ? 'dirty' : 'clean', additions: 1, deletions: 1, changed_files: 1 });
+      if (pathname.endsWith('/reviews')) return answer([]);
+      if (pathname.endsWith('/check-runs')) return answer({ check_runs: [] });
+      return answer({ state: 'success', statuses: [] });
+    });
     vi.stubGlobal('fetch', fetch);
     const actions = await new GitHubClient('secret').myActions('me', ['o/r', 'o/s']);
-    expect(actions.map((a) => a.pr.key)).toEqual(['o/r#1']);
+    expect(actions.map((a) => [a.pr.key, a.approved, a.conflict])).toEqual([['o/r#1', true, false], ['o/r#3', false, true]]);
     const [url, init] = fetch.mock.calls[0]!;
     expect(url).toBe('https://api.github.com/graphql');
     expect(init.method).toBe('POST');

@@ -75,6 +75,10 @@ export interface MyAction {
   approved: boolean;
   /** Discussions whose last word is someone else's: unresolved review threads, plus the conversation. */
   unanswered: number;
+  /** Merge conflict with the base branch. */
+  conflict: boolean;
+  /** A CI check or commit status of the last commit failed (as the list's "CI FAILED"). */
+  ciFailed: boolean;
 }
 
 /** Background Claude Code session started by the "Review" button, latest one per PR. */

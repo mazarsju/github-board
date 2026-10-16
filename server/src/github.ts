@@ -99,9 +99,14 @@ export class GitHubClient {
   async myActions(login: string, repos: readonly string[]): Promise<MyAction[]> {
     const q = `is:pr is:open author:${login} sort:updated-desc ${repos.map((r) => `repo:${r}`).join(' ')}`;
     const data = await this.graphql<{ search: { nodes: (MyPullNode | Record<string, never>)[] } }>(MY_PULLS_QUERY, { q });
-    return data.search.nodes
-      .filter((node): node is MyPullNode => 'number' in node)
-      .map((node) => toMyAction(node, login))
+    const nodes = data.search.nodes.filter((node): node is MyPullNode => 'number' in node);
+    // Conflicts and CI come from the PR details, shared with the list (cached per PR version).
+    const details = await Promise.all(nodes.map((node) => {
+      const [owner = '', repo = ''] = node.repository.nameWithOwner.split('/');
+      return this.getDetails(owner, repo, node.number, node.updatedAt).catch(() => null);
+    }));
+    return nodes
+      .map((node, i) => toMyAction(node, login, details[i]))
       .filter((action): action is MyAction => !!action);
   }
 
@@ -315,11 +320,16 @@ export function unansweredCount(node: Pick<MyPullNode, 'reviewThreads' | 'commen
   return threads + (last && isOtherHuman(last.author, me) ? 1 : 0);
 }
 
-/** The action `me` has to take on their PR, or null when it waits for nobody but reviewers. */
-export function toMyAction(node: MyPullNode, me: string): MyAction | null {
+/**
+ * The action `me` has to take on their PR, or null when it waits for nobody but reviewers.
+ * Conflicts and CI failures come from the PR's `details`, when known.
+ */
+export function toMyAction(node: MyPullNode, me: string, details?: Pick<PrDetails, 'mergeableState' | 'ci'> | null): MyAction | null {
   const approved = node.latestOpinionatedReviews.nodes.filter((r) => r.state === 'APPROVED').length >= REQUIRED_APPROVALS;
   const unanswered = unansweredCount(node, me);
-  if (!approved && !unanswered) return null;
+  const conflict = details?.mergeableState === 'dirty';
+  const ciFailed = details?.ci === 'failure';
+  if (!approved && !unanswered && !conflict && !ciFailed) return null;
   const repo = node.repository.nameWithOwner;
   const [owner = '', name = ''] = repo.split('/');
   const pr: PullRequest = {
@@ -336,7 +346,7 @@ export function toMyAction(node: MyPullNode, me: string): MyAction | null {
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };
-  return { pr, approved, unanswered };
+  return { pr, approved, unanswered, conflict, ciFailed };
 }
 
 /** Latest meaningful review state of each reviewer (comments and pending reviews ignored). */

@@ -13,9 +13,11 @@ const COLUMNS = 6;
 /** How often a review's findings are checked while one of them is being edited. */
 const EDIT_POLL_MS = 5_000;
 
-function Reasons({ action: { approved, unanswered } }: { action: MyAction }) {
+function Reasons({ action: { approved, unanswered, conflict, ciFailed } }: { action: MyAction }) {
   return (
     <span className="reasons">
+      {ciFailed && <span className="badge ko strong" title="A CI check or commit status of the last commit failed">CI FAILED</span>}
+      {conflict && <span className="badge ko strong" title="Merge conflict with the base branch">Conflict</span>}
       {approved && <span className="badge ok strong" title="Enough approvals to merge">Ready to merge</span>}
       {unanswered > 0 && (
         <span className="badge wait strong" title="Unresolved review threads, or a conversation whose last message is not yours (bots excluded)">
@@ -39,9 +41,10 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
     retry: false,
     refetchInterval: (q) => (q.state.data?.findings?.some((f) => f.editing) ? EDIT_POLL_MS : false),
   });
-  // Rejected findings leave the list.
-  const findings = (data?.findings ?? []).filter((f) => f.decision !== 'dropped');
-  const opened = typeof open === 'number' ? findings.find((f) => f.id === open) : undefined;
+  // Decided findings (posted or rejected) leave the list; an open detail stays to show the outcome.
+  const all = data?.findings ?? [];
+  const findings = all.filter((f) => !f.decision);
+  const opened = typeof open === 'number' ? all.find((f) => f.id === open) : undefined;
   return (
     <>
       <PrRow row={{ pr, depth: 0 }} refresh={refresh} action={
@@ -49,6 +52,7 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
           <button type="button" className="btn primary small" title="Result of the Claude review" onClick={() => setOpen('synthesis')}>Review summary</button>
           {review.state === 'failed' && <span className="badge ko strong" title="The Claude session ended with an error">Review failed</span>}
           {data?.findings?.length === 0 && <span className="badge ok">No findings</span>}
+          {all.length > 0 && !findings.length && <span className="badge ok" title="Every finding was posted or rejected">All findings handled</span>}
           {error && <span className="muted" title={error.message}>—</span>}
         </span>
       } />
@@ -61,7 +65,6 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
               {f.file && <code className="muted">{findingPlace(f)}</code>}
               {f.suggestion && <span className="badge" title="Fix proposed">suggestion</span>}
               {f.editing && <span className="badge wait" title="Claude is rewriting this finding">editing…</span>}
-              {f.decision === 'posted' && <span className="badge ok" title="Posted on GitHub">posted</span>}
             </button>
           </td>
         </tr>
