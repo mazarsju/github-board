@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { approvalCount, ciState, GitHubClient, reviewDecision } from '../src/github.ts';
+import { approvalCount, type CheckRun, ciState, GitHubClient, reviewDecision } from '../src/github.ts';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -84,7 +84,7 @@ describe('GitHubClient', () => {
   });
 
   /** Routes of a PR's details: the PR, its reviews and the CI of its head commit "abc". */
-  const detailsRoutes = (pull: object, reviews: unknown[], runs: { status: string; conclusion: string | null }[]): Record<string, [number, unknown]> => ({
+  const detailsRoutes = (pull: object, reviews: unknown[], runs: CheckRun[]): Record<string, [number, unknown]> => ({
     '/repos/o/r/pulls/1': [200, { head: { sha: 'abc' }, additions: 0, deletions: 0, changed_files: 0, mergeable_state: 'clean', ...pull }],
     '/repos/o/r/pulls/1/reviews': [200, reviews],
     '/repos/o/r/commits/abc/check-runs': [200, { check_runs: runs }],
@@ -95,7 +95,7 @@ describe('GitHubClient', () => {
     const fetch = mockFetch(detailsRoutes(
       { additions: 3, deletions: 1, changed_files: 2, mergeable_state: 'dirty' },
       [{ user: { login: 'bob' }, state: 'APPROVED' }],
-      [{ status: 'completed', conclusion: 'failure' }],
+      [{ id: 5, name: 'c5', status: 'completed', conclusion: 'failure' }],
     ));
     const client = new GitHubClient('t');
     const d = await client.getDetails('o', 'r', 1, 'v1');
@@ -115,7 +115,7 @@ describe('GitHubClient', () => {
   });
 
   test('getDetails does not cache a running CI, whose completion does not change updatedAt', async () => {
-    const fetch = mockFetch(detailsRoutes({}, [], [{ status: 'in_progress', conclusion: null }]));
+    const fetch = mockFetch(detailsRoutes({}, [], [{ id: 6, name: 'c6', status: 'in_progress', conclusion: null }]));
     const client = new GitHubClient('t');
     expect((await client.getDetails('o', 'r', 1, 'v1')).ci).toBe('pending');
     await client.getDetails('o', 'r', 1, 'v1');
@@ -156,13 +156,28 @@ describe('approvalCount', () => {
 describe('ciState', () => {
   test('combines check runs and commit statuses', () => {
     expect(ciState(null, null)).toBe('none');
-    expect(ciState({ check_runs: [{ status: 'completed', conclusion: 'success' }] }, null)).toBe('success');
-    expect(ciState({ check_runs: [{ status: 'completed', conclusion: 'skipped' }] }, null)).toBe('success');
-    expect(ciState({ check_runs: [{ status: 'in_progress', conclusion: null }] }, null)).toBe('pending');
-    expect(ciState({ check_runs: [{ status: 'completed', conclusion: 'timed_out' }] }, null)).toBe('failure');
-    expect(ciState({ check_runs: [{ status: 'completed', conclusion: 'success' }] }, { state: 'error', statuses: [{}] })).toBe('failure');
+    expect(ciState({ check_runs: [{ id: 7, name: 'c7', status: 'completed', conclusion: 'success' }] }, null)).toBe('success');
+    expect(ciState({ check_runs: [{ id: 8, name: 'c8', status: 'completed', conclusion: 'skipped' }] }, null)).toBe('success');
+    expect(ciState({ check_runs: [{ id: 9, name: 'c9', status: 'in_progress', conclusion: null }] }, null)).toBe('pending');
+    expect(ciState({ check_runs: [{ id: 10, name: 'c10', status: 'completed', conclusion: 'timed_out' }] }, null)).toBe('failure');
+    expect(ciState({ check_runs: [{ id: 11, name: 'c11', status: 'completed', conclusion: 'success' }] }, { state: 'error', statuses: [{}] })).toBe('failure');
     // A failure wins over checks still running.
-    expect(ciState({ check_runs: [{ status: 'in_progress', conclusion: null }, { status: 'completed', conclusion: 'failure' }] }, null)).toBe('failure');
+    expect(ciState({ check_runs: [{ id: 12, name: 'c12', status: 'in_progress', conclusion: null }, { id: 13, name: 'c13', status: 'completed', conclusion: 'failure' }] }, null)).toBe('failure');
+    // Only the latest run of each check counts: a cancelled then re-run workflow is a success.
+    const rerun = { check_runs: [
+      { id: 10, name: 'Test', app: { id: 1 }, status: 'completed', conclusion: 'cancelled' },
+      { id: 11, name: 'CI result', app: { id: 1 }, status: 'completed', conclusion: 'failure' },
+      { id: 21, name: 'CI result', app: { id: 1 }, status: 'completed', conclusion: 'success' },
+      { id: 20, name: 'Test', app: { id: 1 }, status: 'completed', conclusion: 'success' },
+    ] };
+    expect(ciState(rerun, null)).toBe('success');
+    // …whatever the order the API lists them in, and a newer failing run still fails.
+    expect(ciState({ check_runs: [...rerun.check_runs, { id: 30, name: 'Test', app: { id: 1 }, status: 'completed', conclusion: 'failure' }] }, null)).toBe('failure');
+    // Same name from two apps: two different checks.
+    expect(ciState({ check_runs: [
+      { id: 1, name: 'build', app: { id: 1 }, status: 'completed', conclusion: 'failure' },
+      { id: 2, name: 'build', app: { id: 2 }, status: 'completed', conclusion: 'success' },
+    ] }, null)).toBe('failure');
     // Without any classic status, the combined "pending" state is ignored.
     expect(ciState({ check_runs: [] }, { state: 'pending', statuses: [] })).toBe('none');
   });

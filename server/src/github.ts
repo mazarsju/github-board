@@ -170,8 +170,16 @@ export interface ReviewPayload {
   state: string;
 }
 
+export interface CheckRun {
+  id: number;
+  name: string;
+  app?: { id: number } | null;
+  status: string;
+  conclusion: string | null;
+}
+
 export interface ChecksPayload {
-  check_runs: { status: string; conclusion: string | null }[];
+  check_runs: CheckRun[];
 }
 
 export interface StatusPayload {
@@ -222,10 +230,25 @@ export function approvalCount(reviews: ReviewPayload[] | null): number {
 
 const FAILED = ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'];
 
+/**
+ * Latest run of each check (same name, same app). A commit keeps the runs of every workflow
+ * execution, e.g. a cancelled run followed by a successful re-run: only the latest one counts,
+ * as on GitHub's PR page. Run ids grow over time.
+ */
+function latestRuns(runs: CheckRun[]): CheckRun[] {
+  const latest = new Map<string, CheckRun>();
+  for (const run of runs) {
+    const key = `${run.app?.id ?? ''}/${run.name}`;
+    const seen = latest.get(key);
+    if (!seen || run.id > seen.id) latest.set(key, run);
+  }
+  return [...latest.values()];
+}
+
 /** Combines check runs and classic commit statuses → success / failure / pending / none. */
 export function ciState(checks: ChecksPayload | null, status: StatusPayload | null): CiState {
   const results: string[] = [];
-  for (const run of checks?.check_runs ?? []) {
+  for (const run of latestRuns(checks?.check_runs ?? [])) {
     if (run.status !== 'completed') results.push('pending');
     else if (FAILED.includes(run.conclusion ?? '')) results.push('failure');
     else results.push('success');

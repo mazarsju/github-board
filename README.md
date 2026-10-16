@@ -12,7 +12,7 @@ Webapp listing **every open Pull Request of a few tracked GitHub repositories, o
   - author
   - time since the PR was opened (`45 min`, `5 h`, `3 j`, `2 sem.`…; full date on hover)
   - approvals out of the number required to merge (`1/2`; the threshold is `REQUIRED_APPROVALS` in `shared/config.ts`, currently **2**)
-  - status, the most blocking one winning: **CI FAILED** (a check run or commit status of the last commit failed) › **Draft** › **Conflit** (merge conflict) › **Changements demandés** › **Approuvée** (required approvals reached) › **Review en attente**
+  - status, the most blocking one winning: **CI FAILED** (a check or commit status of the last commit failed — failed, timed out, cancelled, action required; only the latest run of each check counts, so a successful re-run clears an earlier failure) › **Draft** › **Conflit** (merge conflict) › **Changements demandés** › **Approuvée** (required approvals reached) › **Review en attente**
   - change size (`+added −deleted` lines; number of files on hover)
 - **Stacked PRs** are kept together: a PR whose base branch is the branch of another open PR of the same project is listed right under it, indented (↳, with the parent PR on hover), and the first PR of the stack shows `stack · N`. A stack is placed where its newest PR would be; a PR with several stacked PRs forms a tree, oldest child first.
 - Instant filter on title, project, number and author
