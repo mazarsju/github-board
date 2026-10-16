@@ -1,4 +1,4 @@
-// Pure logic: default state, migration, PR filter, grouping and status.
+// Pure logic: default state, migration, PR filter, grouping, status and review readiness.
 import { REPOS, REQUIRED_APPROVALS } from './config.ts';
 import type { AppState, PrDetails, PrStatus, PullRequest, Settings, StackedPr } from './types.ts';
 
@@ -48,7 +48,8 @@ export function groupByRepo(prs: PullRequest[], repos: readonly string[] = REPOS
 /**
  * Orders the PRs of one repository so that stacked PRs sit together: a PR whose base branch is
  * another listed PR's branch comes right after it, one level deeper. Stacks (and standalone PRs)
- * keep the input order of their newest PR; inside a stack, PRs follow the stack, oldest sibling first.
+ * keep the input order of their first PR in that order; inside a stack, PRs follow the stack, oldest
+ * sibling first.
  */
 export function orderStacks(prs: PullRequest[]): StackedPr[] {
   const byHead = new Map<string, PullRequest>();
@@ -98,4 +99,39 @@ export function prStatus(pr: Pick<PullRequest, 'draft'>, d: Pick<PrDetails, 'mer
   if (d.review === 'changes') return 'changes';
   if (d.approvals >= REQUIRED_APPROVALS) return 'approved';
   return 'pending';
+}
+
+/**
+ * How much a status calls for a review, 0..1: a PR waiting for reviewers first, then one whose
+ * changes were requested (to re-review), then an approved one; a failed CI, a draft or a merge
+ * conflict can't be reviewed as is.
+ */
+const STATUS_READINESS: Record<PrStatus, number> = {
+  pending: 1, changes: 0.8, approved: 0.6, 'ci-failed': 0.2, draft: 0.2, conflict: 0.2,
+};
+
+const DAY = 86_400_000;
+
+/** How fresh a PR is, 0..1: opened < 2 days ago 1, up to 5 days 0.9, up to 10 days 0.7, older 0.6. */
+export function ageReadiness(createdAt: string, now = Date.now()): number {
+  const days = (now - new Date(createdAt).getTime()) / DAY;
+  if (days < 2) return 1;
+  if (days <= 5) return 0.9;
+  if (days <= 10) return 0.7;
+  return 0.6;
+}
+
+/** Review readiness of a PR over 100 (status × freshness), or null while its status is unknown. */
+export function readinessScore(pr: Pick<PullRequest, 'createdAt'>, status: PrStatus | null, now = Date.now()): number | null {
+  return status ? Math.round(100 * STATUS_READINESS[status] * ageReadiness(pr.createdAt, now)) : null;
+}
+
+/**
+ * PRs from the most to the least ready for a review; PRs whose status is not known yet come
+ * last. Ties keep the input order (newest first). Passed to orderStacks, a stack then sits where
+ * its best-scored PR would be: the whole stack gets its best score.
+ */
+export function byReadiness(prs: PullRequest[], statusOf: (pr: PullRequest) => PrStatus | null, now = Date.now()): PullRequest[] {
+  const score = new Map(prs.map((pr) => [pr, readinessScore(pr, statusOf(pr), now) ?? -1]));
+  return [...prs].sort((a, b) => score.get(b)! - score.get(a)!);
 }

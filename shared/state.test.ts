@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { REPOS, REQUIRED_APPROVALS } from './config.ts';
-import { defaultState, groupByRepo, matchesFilter, migrate, orderStacks, prStatus, toggleCollapsed } from './state.ts';
+import {
+  ageReadiness, byReadiness, defaultState, groupByRepo, matchesFilter, migrate, orderStacks, prStatus, readinessScore, toggleCollapsed,
+} from './state.ts';
 import type { PullRequest } from './types.ts';
 
 const pr = (n: number, extra: Partial<PullRequest> = {}): PullRequest => ({
@@ -167,5 +169,42 @@ describe('prStatus', () => {
 
   test('mergeability not computed yet is not a conflict', () => {
     expect(prStatus(pr(1), { ...ready, mergeableState: 'unknown' })).toBe('approved');
+  });
+});
+
+describe('review readiness', () => {
+  const NOW = Date.parse('2026-10-20T12:00:00Z');
+  const daysAgo = (d: number) => new Date(NOW - d * 86_400_000).toISOString();
+
+  test('ageReadiness: the fresher the better', () => {
+    expect([0, 1.9, 2, 5, 5.1, 10, 10.1, 60].map((d) => ageReadiness(daysAgo(d), NOW))).toEqual([1, 1, 0.9, 0.9, 0.7, 0.7, 0.6, 0.6]);
+  });
+
+  test('readinessScore is 100 × status × freshness, unknown until the status is', () => {
+    expect(readinessScore({ createdAt: daysAgo(1) }, 'pending', NOW)).toBe(100);
+    expect(readinessScore({ createdAt: daysAgo(3) }, 'changes', NOW)).toBe(72);
+    expect(readinessScore({ createdAt: daysAgo(7) }, 'approved', NOW)).toBe(42);
+    expect(readinessScore({ createdAt: daysAgo(20) }, 'ci-failed', NOW)).toBe(12);
+    expect(readinessScore({ createdAt: daysAgo(1) }, 'draft', NOW)).toBe(20);
+    expect(readinessScore({ createdAt: daysAgo(1) }, 'conflict', NOW)).toBe(20);
+    expect(readinessScore({ createdAt: daysAgo(1) }, null, NOW)).toBeNull();
+  });
+
+  test('byReadiness: most ready first, unknown statuses last, ties in the input order', () => {
+    const prs = [pr(1, { createdAt: daysAgo(1) }), pr(2, { createdAt: daysAgo(1) }), pr(3, { createdAt: daysAgo(1) }), pr(4, { createdAt: daysAgo(30) })];
+    const status = { 1: 'approved', 2: null, 3: 'pending', 4: 'pending' } as const;
+    expect(byReadiness(prs, (p) => status[p.number as 1 | 2 | 3 | 4], NOW).map((p) => p.number)).toEqual([3, 1, 4, 2]); // #1 and #4 both score 60
+  });
+
+  test('a stack takes the best score of its PRs', () => {
+    // #2 (draft, 20) carries #3 (pending, 100) on top of it: the stack goes before #1 (approved, 60).
+    const prs = [
+      pr(1, { createdAt: daysAgo(1), headRef: 'b1' }),
+      pr(2, { createdAt: daysAgo(1), headRef: 'b2' }),
+      pr(3, { createdAt: daysAgo(1), headRef: 'b3', baseRef: 'b2' }),
+    ];
+    const status = { 1: 'approved', 2: 'draft', 3: 'pending' } as const;
+    const rows = orderStacks(byReadiness(prs, (p) => status[p.number as 1 | 2 | 3], NOW));
+    expect(rows.map((r) => [r.pr.number, r.depth])).toEqual([[2, 0], [3, 1], [1, 0]]);
   });
 });

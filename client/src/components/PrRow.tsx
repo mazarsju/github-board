@@ -21,6 +21,14 @@ function detailsPollInterval(d: PrDetails | undefined, polls: number, refresh: n
   return false;
 }
 
+/** Query of a PR's details, shared by its row and the list's ordering (one fetch per PR version). */
+export const detailsQuery = (pr: PullRequest) => ({
+  queryKey: ['details', pr.key, pr.updatedAt],
+  queryFn: () => api.details(pr),
+  staleTime: Infinity,
+  retry: false,
+});
+
 const STATUS: Record<PrStatus, [className: string, label: string]> = {
   'ci-failed': ['ko strong', 'CI FAILED'],
   draft: ['draft', 'Draft'],
@@ -70,10 +78,7 @@ export function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd = fa
   onReview?: (pr: PullRequest) => Promise<void>; review?: ReviewSession;
 }) {
   const { data: d, error } = useQuery({
-    queryKey: ['details', pr.key, pr.updatedAt],
-    queryFn: () => api.details(pr),
-    staleTime: Infinity,
-    retry: false,
+    ...detailsQuery(pr),
     refetchInterval: (q) => detailsPollInterval(q.state.data, q.state.dataUpdateCount, refresh),
   });
   const status = d ? prStatus(pr, d) : pr.draft ? 'draft' : null;

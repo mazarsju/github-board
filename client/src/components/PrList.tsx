@@ -1,13 +1,13 @@
 // List view: every open PR of the tracked repositories, one compact row per PR,
-// grouped by repository, stacked PRs kept together under the PR they build on.
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { PullRequest } from '../../../shared/types.ts';
-import { groupByRepo, matchesFilter, orderStacks, toggleCollapsed } from '../../../shared/state.ts';
+// grouped by repository, most ready for a review first, stacked PRs kept together under the PR they build on.
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { PrStatus, PullRequest } from '../../../shared/types.ts';
+import { byReadiness, groupByRepo, matchesFilter, orderStacks, prStatus, toggleCollapsed } from '../../../shared/state.ts';
 import { api } from '../lib/api.ts';
 import { useAppState } from '../state/AppState.tsx';
 import { useToast } from './Toast.tsx';
 import { MyActions } from './MyActions.tsx';
-import { PrRow } from './PrRow.tsx';
+import { detailsQuery, PrRow } from './PrRow.tsx';
 
 /** Number of PRs shown: the newest ones across the tracked repositories (each costs ~5 API calls for its details). */
 const LIMIT = 100;
@@ -44,6 +44,17 @@ export function PrList({ filter }: { filter: string }) {
   const all = data?.items ?? [];
   const items = all.filter((pr) => matchesFilter(pr, filter));
   const total = data?.total ?? 0;
+  // Statuses for the readiness order, from the details the rows load anyway (same queries).
+  // Rows of a collapsed group are not rendered, so their details are not fetched either.
+  const shown = items.filter((pr) => !collapsed.includes(`${pr.owner}/${pr.repo}`));
+  const details = useQueries({ queries: shown.map(detailsQuery) });
+  const statusByKey = new Map<string, PrStatus>();
+  shown.forEach((pr, i) => {
+    const d = details[i]?.data;
+    if (d) statusByKey.set(pr.key, prStatus(pr, d));
+    else if (pr.draft) statusByKey.set(pr.key, 'draft');
+  });
+  const statusOf = (pr: PullRequest) => statusByKey.get(pr.key) ?? null;
 
   let body;
   if (error) body = <p className="list-message error">{error.message}</p>;
@@ -65,7 +76,6 @@ export function PrList({ filter }: { filter: string }) {
             </tr>
           </thead>
           {groupByRepo(items).map(({ repo, prs }) => {
-            // Rows of a collapsed group are not rendered, so their details are not fetched either.
             const open = !collapsed.includes(repo);
             return (
               <tbody key={repo} className={open ? undefined : 'collapsed'}>
@@ -77,7 +87,7 @@ export function PrList({ filter }: { filter: string }) {
                     </button>
                   </th>
                 </tr>
-                {open && orderStacks(prs).map((row, i, rows) => (
+                {open && orderStacks(byReadiness(prs, statusOf)).map((row, i, rows) => (
                   // The last row of a stack is followed by the next root (depth 0), or by nothing.
                   <PrRow key={row.pr.key} row={row} stackEnd={!rows[i + 1]?.depth} refresh={refresh} onReview={review} review={reviewByKey.get(row.pr.key)} />
                 ))}

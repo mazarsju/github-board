@@ -187,6 +187,27 @@ test('PRs are grouped under one separator per project, in the configured order',
   expect(titles(groups[2]!)).toEqual(['PR de webapp-clm', 'Brouillon webapp']);
 });
 
+test('inside a project, PRs are ordered by review readiness, a stack by its best PR', async () => {
+  loggedIn = true;
+  // webapp-clm: #1 review pending (100), #2 draft (20) carrying #4 review pending (100), #3 approved (60).
+  const extra = [
+    pr('webapp-clm', 3, 'Approuvée webapp'),
+    pr('webapp-clm', 4, 'Sur le brouillon', { baseRef: 'webapp-clm-2' }),
+  ];
+  PRS.push(...extra);
+  DETAILS_BY_PR['webapp-clm#4'] = { approvals: 0, review: 'pending' };
+  try {
+    renderApp();
+    await row('Sur le brouillon');
+    const group = screen.getAllByRole('rowgroup').find((g) => g.textContent?.includes('webapp-clm ·'))!;
+    await waitFor(() => expect(within(group).getAllByRole('link').map((a) => a.textContent))
+      .toEqual(['PR de webapp-clm', 'Brouillon webapp', 'Sur le brouillon', 'Approuvée webapp']));
+  } finally {
+    PRS.splice(-extra.length);
+    delete DETAILS_BY_PR['webapp-clm#4'];
+  }
+});
+
 test('a stacked PR is listed right under the PR it builds on, indented', async () => {
   loggedIn = true;
   renderApp();

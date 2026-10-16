@@ -8,7 +8,7 @@ Github Board is a webapp listing the open GitHub pull requests of a few tracked 
 
 - `shared/` — code used by both sides (imported with relative paths and `.ts` extensions)
   - `config.ts` — tracked GitHub repositories (`REPOS`); edit this list to add/remove a repo. Also `REQUIRED_APPROVALS` (approvals needed to merge, used by the list view's status)
-  - `types.ts`, `state.ts` (pure logic: default settings, migration, filter, grouping by repo, stacked PRs, PR status), `schema.ts` (zod validation)
+  - `types.ts`, `state.ts` (pure logic: default settings, migration, filter, grouping by repo, stacked PRs, PR status, review readiness score), `schema.ts` (zod validation)
 - `server/src/` — `index.ts` (entry, env vars), `app.ts` (Express routes), `github.ts` (GitHub client), `store.ts` (JSON persistence), `claude.ts` (local Claude Code CLI: starts `/pr-review` and finding edit sessions, lists them, reads their answer), `skills.ts` (the `/pr-review` and `/pick-change` skills' files and posting script: findings, decisions)
 - `client/src/` — `App.tsx`, `components/` (`PrList.tsx` list view, `PrRow.tsx` table row, `MyActions.tsx` "Actions for me", `ReviewDialogs.tsx` review session dialogs, `Dashboard.tsx` top bar, dialogs, login), `state/` (settings context + debounced save), `lib/` (backend API client, formatting, line diff)
 - Tests: `shared/*.test.ts`, `server/test/`, `client/test/` (Vitest, Testing Library)
