@@ -1,7 +1,5 @@
-// Client de l'API REST GitHub, utilisé côté serveur (le token ne quitte jamais le backend).
-import type {
-  CiState, PrDetails, PullRequest, RateInfo, RepoAccess, ReviewDecision, SearchResult, SortKey,
-} from '../../shared/types.ts';
+// GitHub REST API client, used server-side (the token never leaves the backend).
+import type { CiState, PrDetails, PullRequest, RateInfo, RepoAccess, ReviewDecision, SearchResult, SortKey } from '../../shared/types.ts';
 
 const API = 'https://api.github.com';
 
@@ -43,7 +41,7 @@ export class GitHubClient {
         const data = (await res.json()) as { message?: string; errors?: { message?: string; code?: string }[] };
         if (data.message) msg = data.message;
         if (data.errors?.length) msg += ' — ' + data.errors.map((e) => e.message || e.code).join(', ');
-      } catch { /* corps non JSON */ }
+      } catch { /* non-JSON body */ }
       throw new GitHubError(msg, res.status);
     }
     return (res.status === 204 ? null : await res.json()) as T;
@@ -65,9 +63,9 @@ export class GitHubClient {
   }
 
   /**
-   * Vérifie que le token peut lire chaque dépôt ("owner/repo").
-   * Sans accès, GitHub répond 404 (dépôt privé) ou 403 (SSO SAML non autorisé)
-   * et la recherche ignore silencieusement ces dépôts : d'où ce contrôle explicite.
+   * Checks that the token can read each repository ("owner/repo").
+   * Without access, GitHub answers 404 (private repository) or 403 (SAML SSO not authorized)
+   * and the search silently ignores those repositories: hence this explicit check.
    */
   checkRepoAccess(repos: readonly string[]): Promise<RepoAccess[]> {
     return Promise.all(repos.map((repo) => this.request<{ private: boolean }>(`/repos/${repo}`).then(
@@ -76,7 +74,7 @@ export class GitHubClient {
     )));
   }
 
-  /** Recherche de PRs via /search/issues. */
+  /** PR search through /search/issues. */
   async searchPRs(query: string, { sort = 'updated', limit = 30 }: { sort?: SortKey; limit?: number } = {}): Promise<SearchResult> {
     let q = query.trim();
     if (!/\b(is|type):pr\b/.test(q)) q = `is:pr ${q}`;
@@ -90,12 +88,19 @@ export class GitHubClient {
     return { total: data.total_count, items: data.items.map(normalizeSearchItem) };
   }
 
-  /** Détails d'une PR : diff, état CI, décision de review. Mis en cache par updatedAt. */
+  /**
+   * PR details: diff, mergeability, reviews, CI. Cached by updatedAt, except while GitHub is still
+   * computing mergeability ("unknown") or CI is running: neither updates the PR's updatedAt, so the
+   * next call must see the result.
+   */
   getDetails(owner: string, repo: string, number: number, updatedAt: string): Promise<PrDetails> {
     const cacheKey = `${owner}/${repo}#${number}@${updatedAt}`;
     const cached = this.detailsCache.get(cacheKey);
     if (cached) return cached;
-    const promise = this.fetchDetails(owner, repo, number).catch((err: unknown) => {
+    const promise = this.fetchDetails(owner, repo, number).then((details) => {
+      if (details.mergeableState === 'unknown' || details.ci === 'pending') this.detailsCache.delete(cacheKey);
+      return details;
+    }, (err: unknown) => {
       this.detailsCache.delete(cacheKey);
       throw err;
     });
@@ -109,6 +114,7 @@ export class GitHubClient {
       this.request<PullPayload>(`${base}/pulls/${number}`),
       this.request<ReviewPayload[]>(`${base}/pulls/${number}/reviews?per_page=100`),
     ]);
+    // CI of the PR's head commit: check runs (GitHub Actions…) and classic commit statuses.
     const sha = pull.head.sha;
     const [checks, status] = await Promise.all([
       this.request<ChecksPayload>(`${base}/commits/${sha}/check-runs?per_page=100`).catch(() => null),
@@ -118,29 +124,23 @@ export class GitHubClient {
       additions: pull.additions,
       deletions: pull.deletions,
       changedFiles: pull.changed_files,
-      merged: pull.merged,
       mergeableState: pull.mergeable_state,
-      requestedReviewers: (pull.requested_reviewers ?? []).map((u) => u.login),
       review: reviewDecision(reviews),
+      approvals: approvalCount(reviews),
       ci: ciState(checks, status),
     };
   }
 }
 
 interface SearchItem {
-  id: number;
   number: number;
   title: string;
   html_url: string;
-  state: 'open' | 'closed';
   draft?: boolean;
   repository_url: string;
   user: { login: string; avatar_url: string } | null;
-  labels?: { name: string; color: string }[];
-  comments: number;
   created_at: string;
   updated_at: string;
-  pull_request?: { merged_at: string | null };
 }
 
 interface PullPayload {
@@ -148,9 +148,7 @@ interface PullPayload {
   additions: number;
   deletions: number;
   changed_files: number;
-  merged: boolean;
   mergeable_state: string;
-  requested_reviewers?: { login: string }[];
 }
 
 export interface ReviewPayload {
@@ -171,38 +169,44 @@ export function normalizeSearchItem(item: SearchItem): PullRequest {
   const [owner = '', repo = ''] = (item.repository_url.split('/repos/')[1] ?? '').split('/');
   return {
     key: `${owner}/${repo}#${item.number}`,
-    id: item.id,
     owner,
     repo,
     number: item.number,
     title: item.title,
     url: item.html_url,
-    state: item.pull_request?.merged_at ? 'merged' : item.state,
     draft: !!item.draft,
     author: item.user ? { login: item.user.login, avatar: item.user.avatar_url } : null,
-    labels: (item.labels ?? []).map((l) => ({ name: l.name, color: l.color })),
-    comments: item.comments,
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };
 }
 
-/** Dernier avis significatif par relecteur → approved / changes / pending. */
-export function reviewDecision(reviews: ReviewPayload[] | null): ReviewDecision {
+/** Latest meaningful review state of each reviewer (comments and pending reviews ignored). */
+function latestReviewStates(reviews: ReviewPayload[] | null): string[] {
   const latest = new Map<string, string>();
   for (const r of reviews ?? []) {
     if (!r.user || r.state === 'COMMENTED' || r.state === 'PENDING') continue;
     latest.set(r.user.login, r.state);
   }
-  const states = [...latest.values()];
+  return [...latest.values()];
+}
+
+/** Latest meaningful review of each reviewer → approved / changes / pending. */
+export function reviewDecision(reviews: ReviewPayload[] | null): ReviewDecision {
+  const states = latestReviewStates(reviews);
   if (states.includes('CHANGES_REQUESTED')) return 'changes';
   if (states.includes('APPROVED')) return 'approved';
   return 'pending';
 }
 
+/** Number of reviewers whose latest review is an approval (a dismissed approval does not count). */
+export function approvalCount(reviews: ReviewPayload[] | null): number {
+  return latestReviewStates(reviews).filter((s) => s === 'APPROVED').length;
+}
+
 const FAILED = ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'];
 
-/** Combine check-runs et statuts classiques → success / failure / pending / none. */
+/** Combines check runs and classic commit statuses → success / failure / pending / none. */
 export function ciState(checks: ChecksPayload | null, status: StatusPayload | null): CiState {
   const results: string[] = [];
   for (const run of checks?.check_runs ?? []) {

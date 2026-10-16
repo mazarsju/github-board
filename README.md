@@ -1,122 +1,127 @@
 # Github Board
 
-Webapp pour la **gestion personnalisée des Pull Requests GitHub** : organisez vos PRs dans des tableaux et des colonnes construits à partir de recherches GitHub, et ajoutez-y votre propre couche d'organisation (épinglage, priorités, tags, notes, snooze).
+Webapp listing **every open Pull Request of a few tracked GitHub repositories, one compact row per PR**, to see at a glance what is waiting for review and what can be merged.
 
-Frontend **React + TypeScript** (Vite, TanStack Query) et backend **Node.js + TypeScript** (Express). Le backend détient le token GitHub, interroge l'API REST GitHub et persiste les données personnelles de chaque utilisateur.
+**React + TypeScript** frontend (Vite, TanStack Query) and **Node.js + TypeScript** backend (Express). The backend holds the GitHub token, calls the GitHub REST API and stores each user's settings.
 
-## Fonctionnalités
+## Features
 
-- **Dépôts suivis** : la liste des dépôts est définie dans [`shared/config.ts`](shared/config.ts) (`REPOS`) — actuellement `DiliTrust/service-clm`, `DiliTrust/DT_Public_API` et `DiliTrust/webapp-clm`. Un tableau **« Dépôts »** affiche les PRs à relire sur ces dépôts puis une colonne par dépôt, et un bandeau signale tout dépôt que le token ne peut pas lire
-- **Tableaux multiples** (onglets) et **colonnes personnalisées**, chacune définie par une requête de [recherche GitHub](https://docs.github.com/search-github/searching-on-github/searching-issues-and-pull-requests) (`review-requested:@me`, `org:mon-org label:urgent`, `author:@me is:merged`…)
-- Colonnes : couleur, tri, nombre max, réordonnables par glisser-déposer, lien direct vers la recherche sur GitHub
-- **État de chaque PR** : CI (checks + statuts), décision de review, conflits, diff `+/−`, relecteurs demandés
-- **Organisation personnelle** (sauvegardée par le serveur, par utilisateur GitHub) : épingler ★, priorité (haute/moyenne/basse), tags `#perso`, note privée, snooze jusqu'à une date, masquer
-- Filtre instantané (titre, repo, auteur, labels, `#tag`, notes)
-- Badge **« nouveau »** et **notifications navigateur** optionnelles par colonne
-- Rafraîchissement automatique, compteur de quota API, thème clair/sombre, mode compact
-- Export / import de la configuration en JSON (compatible avec les exports de l'ancienne version statique)
-- Raccourcis : `/` filtrer, `r` rafraîchir
+- **Tracked repositories**: defined in [`shared/config.ts`](shared/config.ts) (`REPOS`), currently `DiliTrust/service-clm`, `DiliTrust/DT_Public_API` and `DiliTrust/webapp-clm`. A banner flags any repository the token cannot read.
+- **PR list**, grouped by project under a separator (in the order of `REPOS`, with the number of PRs; projects without open PRs are hidden), newest first within each project. Click a separator to **collapse / expand** its project; the choice is saved with your settings, and a collapsed project does not load its PRs' details. One row per PR with:
+  - title (link to GitHub) and number
+  - author
+  - time since the PR was opened (`45 min`, `5 h`, `3 j`, `2 sem.`…; full date on hover)
+  - approvals out of the number required to merge (`1/2`; the threshold is `REQUIRED_APPROVALS` in `shared/config.ts`, currently **2**)
+  - status, the most blocking one winning: **CI FAILED** (a check run or commit status of the last commit failed) › **Draft** › **Conflit** (merge conflict) › **Changements demandés** › **Approuvée** (required approvals reached) › **Review en attente**
+  - change size (`+added −deleted` lines; number of files on hover)
+- Instant filter on title, project, number and author
+- Auto refresh, API quota counter, light/dark theme
+- Shortcuts: `/` filter, `r` refresh
 
-## Démarrage
+The interface is in French.
 
-Prérequis : **Node.js ≥ 22.18** (le backend est exécuté directement en TypeScript par Node) et **Yarn**.
+## Getting started
+
+Requirements: **Node.js ≥ 22.18** (the backend's TypeScript is run directly by Node) and **Yarn**.
 
 ```bash
-git clone https://github.com/<vous>/Github-Board.git
+git clone https://github.com/<you>/Github-Board.git
 cd Github-Board
 yarn install
-cp .env.example .env   # optionnel : GITHUB_TOKEN, PORT…
+cp .env.example .env   # optional: GITHUB_TOKEN, PORT…
 ```
 
-### Développement
+### Development
 
 ```bash
 yarn dev
 ```
 
-Lance le backend (<http://127.0.0.1:3001>, rechargé à chaque modification) et le frontend Vite (<http://localhost:5173>, qui relaie `/api` vers le backend). Ouvrez <http://localhost:5173>.
+Starts the backend (<http://127.0.0.1:3001>, reloaded on every change) and the Vite frontend (<http://localhost:5173>, which proxies `/api` to the backend). Open <http://localhost:5173>.
 
 ### Production
 
 ```bash
-yarn build   # compile le frontend dans client/dist
-yarn start   # le backend sert l'API et le frontend compilé sur http://127.0.0.1:3001
+yarn build   # builds the frontend into client/dist
+yarn start   # the backend serves the API and the built frontend on http://127.0.0.1:3001
 ```
 
 ### Configuration (`.env`)
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `GITHUB_TOKEN` | — | Token utilisé par le serveur. S'il est défini, aucune connexion n'est demandée (réservé à un usage local : toute personne joignant le serveur l'utilise). |
-| `HOST` / `PORT` | `127.0.0.1` / `3001` | Adresse d'écoute du backend. |
-| `DATA_FILE` | `server/data/state.json` | Fichier JSON des données personnelles (tableaux, notes…), par utilisateur GitHub. |
+| `GITHUB_TOKEN` | — | Token used by the server. When set, no login is asked (for local use only: anyone reaching the server uses it). |
+| `HOST` / `PORT` | `127.0.0.1` / `3001` | Backend listen address. |
+| `DATA_FILE` | `server/data/state.json` | JSON file of each GitHub user's settings (theme, refresh interval, collapsed projects). |
 
 ### Token
 
-Créez un [Personal Access Token](https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board) :
+Create a [Personal Access Token](https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board):
 
-- **Classic** : scope `repo` (ou `public_repo` si vous ne suivez que des repos publics)
-- **Fine-grained** : accès en lecture à *Pull requests*, *Contents*, *Commit statuses* et *Checks* sur les repos concernés
+- **Classic**: `repo` scope (or `public_repo` if you only track public repositories)
+- **Fine-grained**: read access to *Pull requests*, *Commit statuses* and *Checks* on the relevant repositories
 
-Les dépôts suivis étant **privés** et appartenant à l'organisation DiliTrust, le token doit y avoir accès ; si l'organisation impose le SSO SAML, autorisez le token pour DiliTrust (**Configure SSO → Authorize** dans la liste des tokens). Sinon, un bandeau d'alerte liste les dépôts inaccessibles (la recherche GitHub les ignorerait silencieusement).
+The tracked repositories are **private** and belong to the DiliTrust organisation, so the token must have access to them; if the organisation enforces SAML SSO, authorise the token for DiliTrust (**Configure SSO → Authorize** in the token list). Otherwise, a warning banner lists the inaccessible repositories (the GitHub search would silently ignore them).
 
-Le token ne transite jamais par le navigateur une fois connecté : soit il est lu dans `GITHUB_TOKEN`, soit il est saisi à la connexion puis conservé **en mémoire** par le serveur, associé à un cookie de session `HttpOnly`. Un redémarrage du serveur demande donc de se reconnecter (sauf avec `GITHUB_TOKEN`).
+Once logged in, the token never goes through the browser: it is either read from `GITHUB_TOKEN`, or entered at login and then kept **in memory** by the server, tied to an `HttpOnly` session cookie. Restarting the server therefore requires logging in again (except with `GITHUB_TOKEN`).
 
 ## Structure
 
 ```
-shared/              Code commun frontend/backend
-  config.ts          Dépôts suivis (REPOS) — à modifier pour ajouter/retirer un dépôt
-  types.ts           Types (tableaux, colonnes, PRs, session…)
-  state.ts           Logique pure : état par défaut, migration, filtre, tri
-  schema.ts          Validation (zod) de l'état sauvegardé
+shared/              Code shared by frontend and backend
+  config.ts          Tracked repositories (REPOS), required approvals — edit to add/remove a repository
+  types.ts           Types (settings, PRs, details, session…)
+  state.ts           Pure logic: default settings, migration, filter, PR status
+  schema.ts          Validation (zod) of the saved settings
 server/
-  src/index.ts       Point d'entrée (variables d'environnement)
-  src/app.ts         API REST Express (/api) + service du frontend compilé
-  src/github.ts      Client REST GitHub (recherche, détails PR, accès aux dépôts, quota)
-  src/store.ts       Persistance JSON par utilisateur
-  test/              Tests du backend
+  src/index.ts       Entry point (environment variables)
+  src/app.ts         Express REST API (/api) + serving of the built frontend
+  src/github.ts      GitHub REST client (search, PR details, repository access, quota)
+  src/store.ts       Per-user JSON persistence of the settings
+  test/              Backend tests
 client/
   index.html, vite.config.ts
-  src/App.tsx        Session et chargement de l'état
-  src/components/    Tableau, colonnes, cartes PR, dialogues, connexion
-  src/state/         État personnel (contexte React, sauvegarde automatique)
-  src/lib/           Client de l'API backend, formatage
-  test/              Tests du frontend (Testing Library)
+  src/App.tsx        Session and settings loading
+  src/components/    PR list, top bar, settings dialog, login
+  src/state/         Settings (React context, automatic saving)
+  src/lib/           Backend API client, formatting
+  test/              Frontend tests (Testing Library)
 ```
 
-### API du backend
+### Backend API
 
-| Méthode et route | Rôle |
+| Method and route | Purpose |
 | --- | --- |
-| `POST /api/session` · `GET` · `DELETE` | Connexion avec un token, session courante, déconnexion |
-| `GET /api/state` · `PUT` | Lecture / sauvegarde de l'état personnel |
-| `GET /api/search?q=&sort=&limit=` | Recherche de PRs |
-| `GET /api/pulls/:owner/:repo/:number/details?updatedAt=` | CI, reviews, diff d'une PR (mis en cache) |
-| `GET /api/repos/access` | Accès du token aux dépôts suivis |
-| `GET /api/rate` | Quota GitHub restant |
+| `POST /api/session` · `GET` · `DELETE` | Log in with a token, current session, log out |
+| `GET /api/state` · `PUT` | Read / save the user's settings |
+| `GET /api/search?q=&sort=&limit=` | PR search |
+| `GET /api/pulls/:owner/:repo/:number/details?updatedAt=` | Reviews (decision and approval count), diff size, mergeability and CI state of a PR (cached) |
+| `GET /api/repos/access` | Token access to the tracked repositories |
+| `GET /api/rate` | Remaining GitHub quota |
 
-### Modifier les dépôts suivis
+### Changing the tracked repositories
 
-Éditez le tableau `REPOS` de `shared/config.ts`. Le tableau « Dépôts » est généré à partir de cette liste pour un nouvel utilisateur (ou via **Réinitialiser**) ; une configuration existante conserve ses colonnes, ajustez-les si besoin. Le contrôle d'accès utilise toujours la liste à jour.
+Edit the `REPOS` array in `shared/config.ts`: the list and the access check use it directly.
 
-## Tests et vérifications
+## Tests and checks
 
 ```bash
-yarn test        # Vitest : shared + server (Node) et client (jsdom)
-yarn typecheck   # TypeScript, backend et frontend
+yarn test        # Vitest: shared + server (Node) and client (jsdom)
+yarn typecheck   # TypeScript, backend and frontend
 ```
 
-Le workflow `.github/workflows/ci.yml` exécute typecheck, tests et build à chaque push et pull request.
+The `.github/workflows/ci.yml` workflow runs typecheck, tests and build on every push and pull request.
 
-## Limites connues
+## Known limitations
 
-- L'API de recherche GitHub est limitée à 30 requêtes/minute : une requête par colonne et par rafraîchissement.
-- Le chargement des détails (CI, reviews) coûte ~4 appels par PR ouverte ; désactivable dans les paramètres.
-- Les sessions sont gardées en mémoire : redémarrer le serveur déconnecte les utilisateurs (sauf avec `GITHUB_TOKEN`).
-- L'app nécessite désormais un serveur Node : elle ne peut plus être publiée sur GitHub Pages.
-- Si l'état est modifié depuis deux onglets en même temps, la dernière sauvegarde l'emporte.
+- The list shows at most the 100 most recently opened PRs (GitHub search page size); the counter above it says when there are more.
+- Approvals, status and size cost 4 GitHub API calls per PR (PR, reviews, check runs, commit statuses), cached until the PR changes.
+- A CI finishing does not change the PR itself: while a PR's CI is running, its details are fetched again at each refresh (auto refresh interval), so a failure shows up at the latest one refresh later.
+- GitHub computes mergeability lazily: right after a push, a conflict may only show up after a few seconds (the app checks again automatically).
+- Sessions are kept in memory: restarting the server logs users out (except with `GITHUB_TOKEN`).
+- The app now needs a Node server: it can no longer be published on GitHub Pages.
+- If the state is changed from two tabs at the same time, the last save wins.
 
-## Licence
+## License
 
 MIT

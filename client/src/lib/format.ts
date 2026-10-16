@@ -1,30 +1,16 @@
-// Utilitaires d'affichage.
+// Display helpers.
 
-const rtf = new Intl.RelativeTimeFormat('fr', { numeric: 'auto' });
-const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
-  ['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60],
+const AGE_UNITS: [string, number][] = [
+  ['an', 31536000], ['mois', 2592000], ['sem.', 604800], ['j', 86400], ['h', 3600], ['min', 60],
 ];
 
-export function ago(iso: string, now = Date.now()): string {
-  const s = (new Date(iso).getTime() - now) / 1000;
-  for (const [u, sec] of UNITS) if (Math.abs(s) >= sec) return rtf.format(Math.round(s / sec), u);
-  return 'à l’instant';
-}
-
-/** Style d'un label GitHub (texte clair ou foncé selon la luminosité du fond). */
-export function labelStyle(hex: string): { background: string; color: string } {
-  const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
-  const light = (r * 299 + g * 587 + b * 114) / 1000 > 150;
-  return { background: `#${hex}`, color: light ? '#1f2328' : '#fff' };
-}
-
-/** ISO → valeur d'un <input type="datetime-local"> (heure locale). */
-export function toLocalInput(iso: string | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
-export function githubSearchUrl(query: string): string {
-  return `https://github.com/pulls?q=${encodeURIComponent(/\bis:pr\b/.test(query) ? query : `is:pr ${query}`)}`;
+/** Compact elapsed time since a date: "45 min", "5 h", "3 j", "2 sem.", "4 mois", "2 ans". */
+export function age(iso: string, now = Date.now()): string {
+  const s = Math.max(0, (now - new Date(iso).getTime()) / 1000);
+  for (const [unit, sec] of AGE_UNITS) {
+    if (s < sec) continue;
+    const n = Math.floor(s / sec);
+    return `${n} ${unit === 'an' && n > 1 ? 'ans' : unit}`;
+  }
+  return '< 1 min';
 }

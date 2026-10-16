@@ -1,110 +1,129 @@
 import { describe, expect, test } from 'vitest';
-import { REPOS, reposQuery } from './config.ts';
-import {
-  defaultState, isSnoozed, matchesFilter, migrate, moveColumn, patchPrMeta, reposBoard, REPOS_BOARD_ID, visiblePrs,
-} from './state.ts';
-import type { Board, PullRequest } from './types.ts';
+import { listQuery, REPOS, REQUIRED_APPROVALS } from './config.ts';
+import { defaultState, groupByRepo, matchesFilter, migrate, prStatus, toggleCollapsed } from './state.ts';
+import type { PullRequest } from './types.ts';
 
 const pr = (n: number, extra: Partial<PullRequest> = {}): PullRequest => ({
-  key: `DiliTrust/service-clm#${n}`, id: n, owner: 'DiliTrust', repo: 'service-clm', number: n,
-  title: `PR ${n}`, url: '', state: 'open', draft: false, author: { login: 'alice', avatar: '' },
-  labels: [], comments: 0, createdAt: '', updatedAt: '', ...extra,
+  key: `DiliTrust/service-clm#${n}`, owner: 'DiliTrust', repo: 'service-clm', number: n,
+  title: `PR ${n}`, url: '', draft: false, author: { login: 'alice', avatar: '' },
+  createdAt: '', updatedAt: '', ...extra,
 });
 
 describe('config', () => {
-  test('REPOS liste les dépôts DiliTrust suivis', () => {
+  test('REPOS lists the tracked DiliTrust repositories', () => {
     expect(REPOS).toEqual(['DiliTrust/service-clm', 'DiliTrust/DT_Public_API', 'DiliTrust/webapp-clm']);
   });
 
-  test('reposQuery produit un qualificatif repo: par dépôt', () => {
-    expect(reposQuery(['a/b', 'c/d'])).toBe('repo:a/b repo:c/d');
+  test('listQuery targets the open PRs of every tracked repository', () => {
+    expect(listQuery(['a/b', 'c/d'])).toBe('is:open repo:a/b repo:c/d');
+    for (const r of REPOS) expect(listQuery()).toContain(`repo:${r}`);
+  });
+
+  test('a PR needs 2 approvals', () => {
+    expect(REQUIRED_APPROVALS).toBe(2);
   });
 });
 
-describe('état par défaut et migration', () => {
-  test('le tableau des dépôts est le premier tableau par défaut', () => {
-    const s = defaultState();
-    expect(s.boards[0]!.id).toBe(REPOS_BOARD_ID);
-    expect(s.activeBoard).toBe(REPOS_BOARD_ID);
+describe('state', () => {
+  test('default settings', () => {
+    expect(defaultState()).toEqual({ settings: { refresh: 300, theme: 'auto', collapsed: [] } });
   });
 
-  test('reposBoard : une colonne « à relire » puis une colonne par dépôt', () => {
-    const board = reposBoard();
-    expect(board.columns).toHaveLength(REPOS.length + 1);
-    for (const r of REPOS) expect(board.columns[0]!.query).toContain(`repo:${r}`);
-    REPOS.forEach((r, i) => {
-      expect(board.columns[i + 1]).toMatchObject({ query: `is:open repo:${r}`, name: r.split('/')[1] });
-    });
+  test('migrate fills in missing settings', () => {
+    expect(migrate({})).toEqual(defaultState());
+    expect(migrate({ settings: { theme: 'dark' } })).toEqual({ settings: { refresh: 300, theme: 'dark', collapsed: [] } });
+    expect(migrate({ settings: { collapsed: ['a/b'] } }).settings.collapsed).toEqual(['a/b']);
   });
 
-  test('migrate ajoute le tableau des dépôts aux anciennes configurations', () => {
-    const data = migrate({ boards: [{ id: 'x', name: 'Mon travail', columns: [] }], activeBoard: 'x' });
-    expect(data.boards.map((b) => b.id)).toEqual([REPOS_BOARD_ID, 'x']);
-    expect(data.activeBoard).toBe('x');
-    expect(data.reposSeeded).toBe(true);
+  test('toggleCollapsed collapses then expands a repository group', () => {
+    const base = defaultState().settings;
+    const collapsed = toggleCollapsed(base, 'a/b');
+    expect(collapsed).toEqual({ ...base, collapsed: ['a/b'] });
+    expect(toggleCollapsed(toggleCollapsed(collapsed, 'c/d'), 'a/b').collapsed).toEqual(['c/d']);
+    expect(base.collapsed).toEqual([]);
   });
 
-  test('migrate ne recrée pas un tableau des dépôts supprimé', () => {
-    const data = migrate({ boards: [{ id: 'x', name: 'A', columns: [] }], reposSeeded: true });
-    expect(data.boards.map((b) => b.id)).toEqual(['x']);
-  });
-
-  test('migrate complète les paramètres et corrige le tableau actif', () => {
-    const data = migrate({ boards: [{ id: 'x', name: 'A', columns: [] }], reposSeeded: true, activeBoard: 'gone', settings: { theme: 'dark' } as never });
-    expect(data.settings).toMatchObject({ theme: 'dark', refresh: 300 });
-    expect(data.activeBoard).toBe('x');
-  });
-
-  test('migrate sur un utilisateur vierge renvoie l’état par défaut', () => {
-    expect(migrate({}).boards.map((b) => b.name)).toEqual(['Dépôts', 'Mon travail', 'Veille']);
-  });
-});
-
-describe('métadonnées PR', () => {
-  test('patchPrMeta fusionne et retire les champs vides', () => {
-    let prs = patchPrMeta({}, 'k', { pinned: true, note: 'n' });
-    expect(prs).toEqual({ k: { pinned: true, note: 'n' } });
-    prs = patchPrMeta(prs, 'k', { note: '', tags: [] });
-    expect(prs).toEqual({ k: { pinned: true } });
-    prs = patchPrMeta(prs, 'k', { pinned: false });
-    expect(prs).toEqual({});
-  });
-
-  test('isSnoozed compare à la date courante', () => {
-    expect(isSnoozed({ snoozeUntil: '2030-01-01T00:00:00Z' }, Date.parse('2029-01-01'))).toBe(true);
-    expect(isSnoozed({ snoozeUntil: '2030-01-01T00:00:00Z' }, Date.parse('2031-01-01'))).toBe(false);
-    expect(isSnoozed({})).toBe(false);
-  });
-});
-
-describe('filtre et tri', () => {
-  test('matchesFilter : texte, repo, auteur, #tag et labels', () => {
-    const p = pr(1, { title: 'Fix login', labels: [{ name: 'urgent', color: 'ff0000' }] });
-    expect(matchesFilter(p, {}, 'login')).toBe(true);
-    expect(matchesFilter(p, {}, 'service-clm alice')).toBe(true);
-    expect(matchesFilter(p, {}, '#urg')).toBe(true);
-    expect(matchesFilter(p, { tags: ['perso'] }, '#perso')).toBe(true);
-    expect(matchesFilter(p, {}, 'logout')).toBe(false);
-  });
-
-  test('visiblePrs masque hidden/snooze et trie épinglées puis priorité', () => {
-    const items = [pr(1), pr(2), pr(3), pr(4), pr(5)];
-    const prs = {
-      [items[0]!.key]: { hidden: true },
-      [items[1]!.key]: { priority: 'low' as const },
-      [items[2]!.key]: { priority: 'high' as const },
-      [items[3]!.key]: { pinned: true },
-      [items[4]!.key]: { snoozeUntil: '2999-01-01T00:00:00Z' },
+  test('migrate drops data saved by the old board version', () => {
+    const old = {
+      boards: [{ id: 'repos', name: 'Dépôts', columns: [] }], activeBoard: 'repos', prs: { 'o/r#1': { pinned: true } },
+      seen: {}, reposSeeded: true, settings: { refresh: 60, theme: 'light', details: true, compact: false, view: 'list' },
     };
-    expect(visiblePrs(items, prs, '', false).map((x) => x.pr.number)).toEqual([4, 3, 2]);
-    expect(visiblePrs(items, prs, '', true)).toHaveLength(5);
+    expect(migrate(old as never)).toEqual({ settings: { refresh: 60, theme: 'light', collapsed: [] } });
+  });
+});
+
+describe('matchesFilter', () => {
+  const p = pr(42, { title: 'Fix login' });
+
+  test('matches title, repository, number and author', () => {
+    expect(matchesFilter(p, '')).toBe(true);
+    expect(matchesFilter(p, 'LOGIN')).toBe(true);
+    expect(matchesFilter(p, 'service-clm')).toBe(true);
+    expect(matchesFilter(p, '#42')).toBe(true);
+    expect(matchesFilter(p, 'alice')).toBe(true);
   });
 
-  test('moveColumn déplace une colonne à la place de la cible', () => {
-    const col = (id: string) => ({ id, name: id, query: '', color: '', sort: 'updated' as const, limit: 30, notify: false });
-    const board: Board = { id: 'b', name: 'B', columns: [col('a'), col('b'), col('c')] };
-    expect(moveColumn(board, 'c', 'a').columns.map((c) => c.id)).toEqual(['c', 'a', 'b']);
-    expect(moveColumn(board, 'a', 'c').columns.map((c) => c.id)).toEqual(['b', 'c', 'a']);
-    expect(moveColumn(board, 'a', 'a')).toBe(board);
+  test('every term must match', () => {
+    expect(matchesFilter(p, '  fix   alice ')).toBe(true);
+    expect(matchesFilter(p, 'fix bob')).toBe(false);
+  });
+});
+
+describe('groupByRepo', () => {
+  const at = (repo: string, n: number) => pr(n, { key: `DiliTrust/${repo}#${n}`, repo });
+
+  test('groups in the order of the tracked repositories, keeping PR order', () => {
+    const prs = [at('webapp-clm', 9), at('service-clm', 8), at('webapp-clm', 7), at('service-clm', 6)];
+    expect(groupByRepo(prs, ['DiliTrust/service-clm', 'DiliTrust/DT_Public_API', 'DiliTrust/webapp-clm'])).toEqual([
+      { repo: 'DiliTrust/service-clm', prs: [prs[1], prs[3]] },
+      { repo: 'DiliTrust/webapp-clm', prs: [prs[0], prs[2]] },
+    ]);
+  });
+
+  test('repositories missing from the list come last', () => {
+    expect(groupByRepo([at('other', 1), at('service-clm', 2)], ['DiliTrust/service-clm']).map((g) => g.repo))
+      .toEqual(['DiliTrust/service-clm', 'DiliTrust/other']);
+    expect(groupByRepo([])).toEqual([]);
+  });
+});
+
+describe('prStatus', () => {
+  const ready = { mergeableState: 'clean', review: 'approved' as const, approvals: 2, ci: 'success' as const };
+
+  test('approved once the required approvals are reached', () => {
+    expect(prStatus(pr(1), ready)).toBe('approved');
+    expect(prStatus(pr(1), { ...ready, approvals: 3 })).toBe('approved');
+  });
+
+  test('a single approval is not enough: review still pending', () => {
+    expect(prStatus(pr(1), { ...ready, approvals: 1 })).toBe('pending');
+    expect(prStatus(pr(1), { ...ready, review: 'pending', approvals: 0 })).toBe('pending');
+  });
+
+  test('changes requested wins over approvals', () => {
+    expect(prStatus(pr(1), { ...ready, review: 'changes' })).toBe('changes');
+  });
+
+  test('a merge conflict wins over the review state', () => {
+    expect(prStatus(pr(1), { ...ready, mergeableState: 'dirty' })).toBe('conflict');
+    expect(prStatus(pr(1), { ...ready, mergeableState: 'dirty', review: 'changes' })).toBe('conflict');
+  });
+
+  test('a draft is always reported as draft', () => {
+    expect(prStatus(pr(1, { draft: true }), { ...ready, mergeableState: 'dirty' })).toBe('draft');
+  });
+
+  test('a failed CI wins over every other status', () => {
+    expect(prStatus(pr(1), { ...ready, ci: 'failure' })).toBe('ci-failed');
+    expect(prStatus(pr(1, { draft: true }), { ...ready, ci: 'failure', mergeableState: 'dirty', review: 'changes' })).toBe('ci-failed');
+  });
+
+  test('a running or missing CI does not change the status', () => {
+    expect(prStatus(pr(1), { ...ready, ci: 'pending' })).toBe('approved');
+    expect(prStatus(pr(1), { ...ready, ci: 'none' })).toBe('approved');
+  });
+
+  test('mergeability not computed yet is not a conflict', () => {
+    expect(prStatus(pr(1), { ...ready, mergeableState: 'unknown' })).toBe('approved');
   });
 });

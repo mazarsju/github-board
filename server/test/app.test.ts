@@ -7,7 +7,7 @@ import { createApp, type AppOptions } from '../src/app.ts';
 import { GitHubClient, GitHubError } from '../src/github.ts';
 import { MemoryStore } from '../src/store.ts';
 
-/** Client GitHub factice : seul le token "good" est valide. */
+/** Fake GitHub client: only the "good" token is valid. */
 class FakeClient extends GitHubClient {
   tokenValue: string;
   constructor(token: string) { super(token); this.tokenValue = token; }
@@ -48,20 +48,20 @@ async function start(opts: Partial<AppOptions> = {}) {
 }
 
 describe('API', () => {
-  test('exige une session', async () => {
+  test('requires a session', async () => {
     const { call } = await start();
     expect((await call('/session')).status).toBe(401);
     expect((await call('/state')).status).toBe(401);
   });
 
-  test('refuse un token invalide', async () => {
+  test('rejects an invalid token', async () => {
     const { call } = await start();
     const res = await call('/session', { method: 'POST', body: JSON.stringify({ token: 'nope' }) });
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('Bad credentials');
   });
 
-  test('connexion, état, sauvegarde et déconnexion', async () => {
+  test('login, state, save and logout', async () => {
     const { call, store } = await start();
     const login = await call('/session', { method: 'POST', body: JSON.stringify({ token: 'good' }) });
     expect(login.status).toBe(200);
@@ -69,26 +69,25 @@ describe('API', () => {
     expect(login.setCookie).toMatch(/HttpOnly/);
     expect(login.setCookie).toMatch(/SameSite=Strict/);
 
-    const state = await call('/state');
-    expect(state.body.boards[0].id).toBe('repos');
+    expect((await call('/state')).body).toEqual(defaultState());
 
-    const next = { ...defaultState(), prs: { 'o/r#1': { pinned: true } } };
+    const next = { settings: { refresh: 60, theme: 'dark', collapsed: ['DiliTrust/webapp-clm'] } };
     expect((await call('/state', { method: 'PUT', body: JSON.stringify(next) })).status).toBe(204);
-    expect((await store.get('alice')).prs).toEqual({ 'o/r#1': { pinned: true } });
-    expect((await call('/state', { method: 'PUT', body: JSON.stringify({ boards: [] }) })).status).toBe(400);
+    expect(await store.get('alice')).toEqual(next);
+    expect((await call('/state', { method: 'PUT', body: JSON.stringify({ settings: { refresh: -1, theme: 'dark', collapsed: [] } }) })).status).toBe(400);
 
     expect((await call('/session', { method: 'DELETE' })).status).toBe(204);
     expect((await call('/state')).status).toBe(401);
   });
 
-  test('contrôle d’accès aux dépôts suivis', async () => {
+  test('access check of the tracked repositories', async () => {
     const { call } = await start({ envToken: 'good' });
     const res = await call('/repos/access');
     expect(res.body.map((r: { repo: string }) => r.repo)).toEqual(REPOS);
     expect(res.body.filter((r: { ok: boolean }) => !r.ok).map((r: { repo: string }) => r.repo)).toEqual(['DiliTrust/webapp-clm']);
   });
 
-  test('recherche : validation et erreurs GitHub relayées', async () => {
+  test('search: validation and forwarded GitHub errors', async () => {
     const { call } = await start({ envToken: 'good' });
     expect((await call('/search?q=is:open')).body).toEqual({ total: 0, items: [] });
     expect((await call('/search')).status).toBe(400);
@@ -97,13 +96,13 @@ describe('API', () => {
     expect(bad).toMatchObject({ status: 422, body: { error: 'Validation Failed' } });
   });
 
-  test('avec GITHUB_TOKEN : session automatique, connexion manuelle refusée', async () => {
+  test('with GITHUB_TOKEN: automatic session, manual login refused', async () => {
     const { call } = await start({ envToken: 'good' });
     expect((await call('/session')).body).toEqual({ user: { login: 'alice', avatarUrl: 'https://avatar' }, envToken: true });
     expect((await call('/session', { method: 'POST', body: JSON.stringify({ token: 'good' }) })).status).toBe(409);
   });
 
-  test('détails : paramètres validés', async () => {
+  test('details: parameters are validated', async () => {
     const { call } = await start({ envToken: 'good' });
     expect((await call('/pulls/o/r/abc/details')).status).toBe(400);
   });

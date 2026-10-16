@@ -1,12 +1,15 @@
-// Configuration du projet : dépôts GitHub suivis par l'application.
-// Pour ajouter ou retirer un dépôt, modifiez simplement cette liste ("owner/repo").
+// Project configuration: GitHub repositories tracked by the app.
+// To add or remove a repository, just edit this list ("owner/repo").
 export const REPOS: readonly string[] = [
   'DiliTrust/service-clm',
   'DiliTrust/DT_Public_API',
   'DiliTrust/webapp-clm',
 ];
 
-/** Qualificatifs de recherche GitHub ciblant les dépôts donnés (combinés en OU par GitHub). */
-export function reposQuery(repos: readonly string[] = REPOS): string {
-  return repos.map((r) => `repo:${r}`).join(' ');
+/** Number of approvals a PR needs to be mergeable. */
+export const REQUIRED_APPROVALS = 2;
+
+/** GitHub search query listing every open PR of the given repositories (repo: qualifiers are OR-ed). */
+export function listQuery(repos: readonly string[] = REPOS): string {
+  return `is:open ${repos.map((r) => `repo:${r}`).join(' ')}`;
 }

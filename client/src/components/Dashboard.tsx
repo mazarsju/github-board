@@ -1,12 +1,8 @@
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { moveColumn } from '../../../shared/state.ts';
-import type { Column, PullRequest, SessionInfo } from '../../../shared/types.ts';
+import type { SessionInfo } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
-import { useAppState } from '../state/AppState.tsx';
-import { ColumnDialog } from './ColumnDialog.tsx';
-import { ColumnView } from './ColumnView.tsx';
-import { PrDialog } from './PrDialog.tsx';
+import { PrList } from './PrList.tsx';
 import { RepoAlert } from './RepoAlert.tsx';
 import { SettingsDialog } from './SettingsDialog.tsx';
 
@@ -17,14 +13,9 @@ export function Logo() {
 }
 
 export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogout: () => void }) {
-  const { state, update, activeBoard, updateBoard } = useAppState();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState('');
-  const [showHidden, setShowHidden] = useState(false);
-  const [editingColumn, setEditingColumn] = useState<Column | null | undefined>(undefined);
-  const [editingPr, setEditingPr] = useState<PullRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [dragCol, setDragCol] = useState<string | null>(null);
   const filterRef = useRef<HTMLInputElement>(null);
 
   const fetching = useIsFetching({ queryKey: ['search'] }) > 0;
@@ -38,7 +29,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['search'] });
 
-  // Raccourcis : `/` filtrer, `r` rafraîchir.
+  // Shortcuts: `/` filter, `r` refresh.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select, dialog')) return;
@@ -59,18 +50,9 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
     <>
       <header className="topbar">
         <div className="brand"><Logo /><span>Github Board</span></div>
-        <nav className="boards" aria-label="Tableaux">
-          {state.boards.map((b) => (
-            <button key={b.id} type="button" className={b.id === activeBoard.id ? 'active' : ''}
-              onClick={() => update((s) => ({ ...s, activeBoard: b.id }))}>{b.name}</button>
-          ))}
-        </nav>
         <div className="actions">
           <input ref={filterRef} type="search" value={filter} onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filtrer (titre, repo, auteur, #tag)…" aria-label="Filtrer" />
-          <label className="toggle" title="Afficher les PRs masquées / en snooze">
-            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> <span>Masquées</span>
-          </label>
+            placeholder="Filtrer (titre, projet, auteur)…" aria-label="Filtrer" />
           <button type="button" className={`btn${fetching ? ' spinning' : ''}`} title="Rafraîchir (R)" aria-label="Rafraîchir" onClick={() => void refresh()}>⟳</button>
           <button type="button" className="btn" title="Paramètres" aria-label="Paramètres" onClick={() => setSettingsOpen(true)}>⚙</button>
           <img className="avatar" src={session.user.avatarUrl} alt="" title={`Connecté : ${session.user.login}`} />
@@ -80,15 +62,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
       <RepoAlert />
 
       <main>
-        <section className={`board${state.settings.compact ? ' compact' : ''}`} aria-live="polite">
-          {activeBoard.columns.map((col) => (
-            <ColumnView key={col.id} col={col} filter={filter} showHidden={showHidden}
-              onEditColumn={setEditingColumn} onEditPr={setEditingPr}
-              dragging={!!dragCol} onDragStart={setDragCol}
-              onDrop={(to) => { if (dragCol) updateBoard((b) => moveColumn(b, dragCol, to)); setDragCol(null); }} />
-          ))}
-          <button type="button" className="add-column" onClick={() => setEditingColumn(null)}>+ Ajouter une colonne</button>
-        </section>
+        <PrList filter={filter} />
       </main>
 
       <footer className="statusbar">
@@ -96,8 +70,6 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
         <span>{rateText}</span>
       </footer>
 
-      {editingColumn !== undefined && <ColumnDialog col={editingColumn} onClose={() => setEditingColumn(undefined)} />}
-      {editingPr && <PrDialog pr={editingPr} onClose={() => setEditingPr(null)} />}
       {settingsOpen && (
         <SettingsDialog onClose={() => setSettingsOpen(false)} canLogout={!session.envToken}
           onLogout={() => { setSettingsOpen(false); onLogout(); }} />

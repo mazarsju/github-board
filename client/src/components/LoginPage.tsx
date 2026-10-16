@@ -25,12 +25,12 @@ export function LoginPage({ onLogin }: { onLogin: (s: SessionInfo) => void }) {
     <section className="login">
       <form className="login-card" onSubmit={submit}>
         <h1>Github Board</h1>
-        <p>Organisez vos Pull Requests dans des colonnes construites à partir de recherches GitHub, avec épinglage, snooze, notes et tags personnels.</p>
+        <p>Toutes les Pull Requests ouvertes des dépôts suivis, une ligne par PR : auteur, ancienneté, approbations, statut et taille.</p>
         <label htmlFor="tokenInput">Personal Access Token GitHub</label>
         <input type="password" id="tokenInput" value={token} onChange={(e) => setToken(e.target.value)}
           placeholder="ghp_… ou github_pat_…" autoComplete="off" />
         <p className="hint">
-          Scope requis : <code>repo</code> (classic) ou accès en lecture <em>Pull requests</em>, <em>Contents</em>, <em>Commit statuses</em> et <em>Checks</em> (fine-grained).
+          Scope requis : <code>repo</code> (classic) ou accès en lecture <em>Pull requests</em>, <em>Commit statuses</em> et <em>Checks</em> (fine-grained).
           Le token est conservé par le serveur Github Board le temps de la session (jamais dans le navigateur).{' '}
           Pour éviter de le saisir, définissez <code>GITHUB_TOKEN</code> dans <code>.env</code>.{' '}
           <a href="https://github.com/settings/tokens/new?scopes=repo&description=Github%20Board" target="_blank" rel="noopener noreferrer">Créer un token</a>

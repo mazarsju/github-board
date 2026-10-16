@@ -1,4 +1,4 @@
-// Client HTTP du backend (/api). Le token GitHub n'est jamais manipulé par le navigateur.
+// HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
   AppState, PrDetails, PullRequest, RateInfo, RepoAccess, SearchResult, SessionInfo, SortKey,
 } from '../../../shared/types.ts';
@@ -22,13 +22,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     try {
       const data = (await res.json()) as { error?: string };
       if (data.error) msg = data.error;
-    } catch { /* corps non JSON */ }
+    } catch { /* non-JSON body */ }
     throw new ApiError(msg, res.status);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
-/** Limite le nombre de requêtes simultanées (détails PR : ~4 appels GitHub chacune). */
+/** Limits the number of concurrent requests (PR details: 4 GitHub calls each). */
 function limiter(max: number) {
   let active = 0;
   const queue: (() => void)[] = [];
@@ -46,7 +46,7 @@ function limiter(max: number) {
 const detailsLimit = limiter(4);
 
 export const api = {
-  /** Session courante, ou null si non connecté. */
+  /** Current session, or null when logged out. */
   async getSession(): Promise<SessionInfo | null> {
     try {
       return await request<SessionInfo>('/session');
