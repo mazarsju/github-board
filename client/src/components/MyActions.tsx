@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { matchesFilter } from '../../../shared/state.ts';
-import type { FindingSeverity, MyAction, PullRequest, ReviewFinding, ReviewSession } from '../../../shared/types.ts';
+import type { MyAction, PullRequest, ReviewFinding, ReviewSession } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { useAppState } from '../state/AppState.tsx';
 import { PrRow } from './PrRow.tsx';
@@ -22,16 +22,6 @@ function Reasons({ action: { approved, unanswered } }: { action: MyAction }) {
       )}
     </span>
   );
-}
-
-/** Count of findings per severity, e.g. "1 Critical · 2 Minor". */
-function FindingCounts({ findings }: { findings: ReviewFinding[] }) {
-  if (!findings.length) return <span className="badge ok">No findings</span>;
-  const counts = new Map<FindingSeverity, number>();
-  for (const f of findings) counts.set(f.severity, (counts.get(f.severity) ?? 0) + 1);
-  return <>{[...counts].map(([severity, n]) => (
-    <span key={severity} className={`badge ${SEVERITY[severity][1]}`}>{n} {SEVERITY[severity][0]}</span>
-  ))}</>;
 }
 
 /** A finished review: its PR row, then one row per finding, opening its detail. */
@@ -53,7 +43,7 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
         <span className="reasons">
           <button type="button" className="btn primary small" title="Result of the Claude review" onClick={() => setOpen('synthesis')}>Review summary</button>
           {review.state === 'failed' && <span className="badge ko strong" title="The Claude session ended with an error">Review failed</span>}
-          {data?.findings && <FindingCounts findings={data.findings} />}
+          {data?.findings?.length === 0 && <span className="badge ok">No findings</span>}
           {error && <span className="muted" title={error.message}>—</span>}
         </span>
       } />

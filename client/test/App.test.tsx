@@ -328,8 +328,9 @@ test('the findings of a finished review are stacked under it and open their deta
 
   const section = await screen.findByRole('region', { name: 'Actions for me' });
   const entry = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
-  expect(await within(entry).findByText('1 Critical')).toBeInTheDocument();
-  expect(within(entry).getByText('1 Minor')).toBeInTheDocument();
+  // The findings are listed under the entry, not counted in it.
+  expect(await within(section).findByText('Injection SQL')).toBeInTheDocument();
+  expect(within(entry).queryByText('Critical')).not.toBeInTheDocument();
   // One row per finding, right under the PR, in the skill's order.
   const first = entry.nextElementSibling as HTMLElement;
   expect(first).toHaveTextContent('Erreur avalée');
