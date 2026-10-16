@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import { afterEach, describe, expect, test } from 'vitest';
 import { REPOS } from '../../shared/config.ts';
 import { defaultState } from '../../shared/state.ts';
-import { createApp, REVIEW_PROMPT, type AppOptions } from '../src/app.ts';
+import { createApp, type AppOptions } from '../src/app.ts';
 import type { BackgroundSession, ClaudeCli } from '../src/claude.ts';
 import { GitHubClient, GitHubError } from '../src/github.ts';
 import { MemoryStore } from '../src/store.ts';
@@ -120,16 +120,18 @@ describe('API', () => {
       },
       listBackground: async () => [],
       readResult: async () => null,
+      readFindings: async () => null,
     };
     const { call } = await start({ envToken: 'good', claude });
     const post = (path: string, headers: Record<string, string> = { 'X-Github-Board': '1' }) => call(path, { method: 'POST', headers });
 
     expect(await post('/pulls/DiliTrust/service-clm/7/review')).toMatchObject({ status: 200, body: { name: 'review service-clm#7', output: 'abc123' } });
-    expect(started).toEqual([[REVIEW_PROMPT, 'review service-clm#7']]);
+    expect(started).toEqual([['/pr-review https://github.com/DiliTrust/service-clm/pull/7', 'review service-clm#7']]);
     // Without the app's header (e.g. a request from another website): refused, nothing started.
     expect((await post('/pulls/DiliTrust/service-clm/7/review', {})).status).toBe(403);
     expect((await post('/pulls/o/r;rm/7/review')).status).toBe(400);
-    expect(await post('/pulls/o/r/13/review')).toMatchObject({ status: 500, body: { error: 'Lancement de Claude impossible : Not logged in' } });
+    expect((await post('/pulls/o/r/7/review')).status).toBe(404); // not a tracked repository
+    expect(await post('/pulls/DiliTrust/service-clm/13/review')).toMatchObject({ status: 500, body: { error: 'Lancement de Claude impossible : Not logged in' } });
     expect(started).toHaveLength(1);
   });
 
@@ -142,10 +144,16 @@ describe('API', () => {
       { id: 'd1', sessionId: '../../etc/passwd', name: 'review webapp-clm#4', state: 'done', startedAt: 1 },
     ];
     const read: string[] = [];
+    const found: string[] = [];
+    const finding = { id: 1, severity: 'major' as const, file: 'a.ts', line: 4, startLine: null, title: 'Bug', body: 'Details', suggestion: null };
     const claude: ClaudeCli = {
       startBackground: async () => '',
       listBackground: async () => sessions,
       readResult: async (sessionId) => { read.push(sessionId); return sessionId === 'uuid-2' ? 'LGTM' : null; },
+      readFindings: async (owner, repo, number, since) => {
+        found.push(`${owner}/${repo}#${number}@${since}`);
+        return number === 3 ? { findings: [finding], head: 'abc1234' } : null;
+      },
     };
     const { call } = await start({ envToken: 'good', claude });
     const get = (path: string, headers: Record<string, string> = { 'X-Github-Board': '1' }) => call(path, { headers });
@@ -155,12 +163,14 @@ describe('API', () => {
       { key: 'DiliTrust/webapp-clm#3', id: 'b1', name: 'review webapp-clm#3', running: false, state: 'done', startedAt: 1 },
       { key: 'DiliTrust/webapp-clm#4', id: 'd1', name: 'review webapp-clm#4', running: false, state: 'done', startedAt: 1 },
     ]);
-    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: { text: 'LGTM' } });
+    expect(await get('/reviews/b1/result')).toMatchObject({ status: 200, body: { text: 'LGTM', findings: [finding], head: 'abc1234' } });
     expect((await get('/reviews/a1/result')).status).toBe(404); // no answer yet
     expect((await get('/reviews/zz/result')).status).toBe(404); // unknown session
     // A transcript id that is not a plain id is never turned into a path.
     expect((await get('/reviews/d1/result')).status).toBe(404);
     expect(read).toEqual(['uuid-2', 'uuid-1']);
+    // Findings are looked up for the session's own PR, written since the session started.
+    expect(found).toEqual(['DiliTrust/webapp-clm#3@1', 'DiliTrust/service-clm#7@2', 'DiliTrust/webapp-clm#4@1']);
     expect((await get('/reviews', {})).status).toBe(403);
     expect((await get('/reviews/b1/result', {})).status).toBe(403);
   });

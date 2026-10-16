@@ -1,6 +1,6 @@
 // HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
-  AppState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewSession, SessionInfo,
+  AppState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
 } from '../../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -75,8 +75,8 @@ export const api = {
   }),
   /** Review sessions of the tracked repositories, latest one per PR. */
   reviews: () => request<ReviewSession[]>('/reviews', { headers: LOCAL }),
-  /** Final answer of a finished review session. */
-  reviewResult: (id: string) => request<{ text: string }>(`/reviews/${encodeURIComponent(id)}/result`, { headers: LOCAL }),
+  /** Final answer and findings of a finished review session. */
+  reviewResult: (id: string) => request<ReviewResult>(`/reviews/${encodeURIComponent(id)}/result`, { headers: LOCAL }),
   details: (pr: PullRequest) => detailsLimit(() =>
     request<PrDetails>(`/pulls/${pr.owner}/${pr.repo}/${pr.number}/details?${new URLSearchParams({ updatedAt: pr.updatedAt })}`)),
 };

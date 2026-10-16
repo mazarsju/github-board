@@ -1,9 +1,9 @@
 // Local Claude Code CLI: starts the "Review" background sessions, lists them and reads their result.
 import { execFile } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ReviewSession } from '../../shared/types.ts';
+import type { FindingSeverity, ReviewFinding, ReviewSession } from '../../shared/types.ts';
 
 /** A background session as listed by `claude agents --json --all`. */
 export interface BackgroundSession {
@@ -12,7 +12,7 @@ export interface BackgroundSession {
   /** Conversation id, which names the session's transcript file. */
   sessionId: string;
   name: string;
-  /** "done" once finished; other values (working, waiting…) mean it is still going. */
+  /** "done" or "failed" once finished; other values (working, waiting…) mean it is still going. */
   state: string;
   startedAt: number;
 }
@@ -24,6 +24,11 @@ export interface ClaudeCli {
   listBackground(): Promise<BackgroundSession[]>;
   /** Last answer of a session (its final text message), or null when there is none yet. */
   readResult(sessionId: string): Promise<string | null>;
+  /**
+   * Findings the `/pr-review` skill saved for a PR, if written since `since` (ms): older ones
+   * come from a previous review. `owner` and `repo` must be validated (tracked repository).
+   */
+  readFindings(owner: string, repo: string, number: number, since: number): Promise<{ findings: ReviewFinding[]; head: string | null } | null>;
 }
 
 /** Variables not passed on to Claude: the server's GitHub token, and the markers of a parent Claude Code session. */
@@ -32,10 +37,14 @@ const HIDDEN_ENV = ['GITHUB_TOKEN', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLA
 /**
  * CLI running the `bin` executable (default `claude`) in `cwd`. Arguments are passed without
  * a shell, so the prompt and name are never interpreted. Transcripts are read from
- * `configDir` (default: CLAUDE_CONFIG_DIR, or ~/.claude).
+ * `configDir` (default: CLAUDE_CONFIG_DIR, or ~/.claude), the skill's findings from
+ * `findingsDir` (default ~/.cache/pr-review, where `/pr-review` saves them).
  */
-export function claudeCli({ bin = 'claude', cwd, configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude') }: {
-  bin?: string; cwd?: string; configDir?: string;
+export function claudeCli({
+  bin = 'claude', cwd, configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'),
+  findingsDir = join(homedir(), '.cache', 'pr-review'),
+}: {
+  bin?: string; cwd?: string; configDir?: string; findingsDir?: string;
 } = {}): ClaudeCli {
   const run = (args: string[]) => new Promise<string>((resolve, reject) => {
     const env = { ...process.env };
@@ -74,7 +83,41 @@ export function claudeCli({ bin = 'claude', cwd, configDir = process.env.CLAUDE_
       }
       return null;
     },
+
+    async readFindings(owner, repo, number, since) {
+      // Same folder as the skill: ~/.cache/pr-review/<owner>-<repo>-<n>.
+      const workdir = join(findingsDir, `${owner}-${repo}-${number}`);
+      const file = join(workdir, 'findings.json');
+      const info = await stat(file).catch(() => null);
+      if (!info || info.mtimeMs < since) return null;
+      const findings = parseFindings(JSON.parse(await readFile(file, 'utf8')));
+      const context = JSON.parse(await readFile(join(workdir, 'context.json'), 'utf8').catch(() => '{}')) as { head?: unknown };
+      const head = typeof context.head === 'string' && /^[0-9a-f]{7,40}$/.test(context.head) ? context.head : null;
+      return { findings, head };
+    },
   };
+}
+
+const SEVERITIES: FindingSeverity[] = ['critical', 'major', 'minor', 'nit'];
+
+/** Findings of a `findings.json`, keeping the well-formed ones, most severe first. */
+export function parseFindings(raw: unknown): ReviewFinding[] {
+  if (!Array.isArray(raw)) return [];
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const int = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
+  return raw
+    .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object' && !!str(f.title))
+    .map((f, i) => ({
+      id: int(f.id) ?? i + 1,
+      severity: SEVERITIES.includes(f.severity as FindingSeverity) ? f.severity as FindingSeverity : 'minor',
+      file: str(f.file),
+      line: int(f.line),
+      startLine: int(f.start_line),
+      title: str(f.title),
+      body: str(f.body),
+      suggestion: typeof f.suggestion === 'string' && f.suggestion ? f.suggestion : null,
+    }))
+    .sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
 }
 
 /** Text of the last assistant message of a transcript (JSON lines), or null. Unreadable lines are skipped. */
@@ -98,6 +141,23 @@ export function reviewName(repo: string, number: number): string {
   return `review ${repo}#${number}`;
 }
 
+/** Prompt of the review session: the `/pr-review` skill on the PR's URL. */
+export function reviewPrompt(owner: string, repo: string, number: number): string {
+  return `/pr-review https://github.com/${owner}/${repo}/pull/${number}`;
+}
+
+/** Tracked PR a session named by reviewName reviews, or null. */
+export function reviewTarget(name: string, repos: readonly string[]): { owner: string; repo: string; number: number } | null {
+  const match = /^review ([\w.-]+)#(\d+)$/.exec(name);
+  const full = match && repos.find((r) => r.split('/')[1] === match[1]);
+  if (!full) return null;
+  const [owner = '', repo = ''] = full.split('/');
+  return { owner, repo, number: Number(match[2]) };
+}
+
+/** States of a session that is over. */
+const FINISHED = new Set(['done', 'failed', 'stopped', 'killed', 'cancelled', 'error']);
+
 /**
  * Review sessions of the tracked repositories, from the background sessions: those named by
  * reviewName, mapped to their PR, the latest one per PR.
@@ -105,13 +165,12 @@ export function reviewName(repo: string, number: number): string {
 export function toReviewSessions(sessions: BackgroundSession[], repos: readonly string[]): ReviewSession[] {
   const latest = new Map<string, ReviewSession>();
   for (const s of sessions) {
-    const match = /^review ([\w.-]+)#(\d+)$/.exec(s.name);
-    const repo = match && repos.find((r) => r.split('/')[1] === match[1]);
-    if (!repo) continue;
-    const key = `${repo}#${match[2]}`;
+    const target = reviewTarget(s.name, repos);
+    if (!target) continue;
+    const key = `${target.owner}/${target.repo}#${target.number}`;
     const seen = latest.get(key);
     if (seen && seen.startedAt >= s.startedAt) continue;
-    latest.set(key, { key, id: s.id, name: s.name, running: s.state !== 'done', state: s.state, startedAt: s.startedAt });
+    latest.set(key, { key, id: s.id, name: s.name, running: !FINISHED.has(s.state), state: s.state, startedAt: s.startedAt });
   }
   return [...latest.values()];
 }

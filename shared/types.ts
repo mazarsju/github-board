@@ -86,9 +86,37 @@ export interface ReviewSession {
   /** Session name, `review <repo>#<number>`; also accepted by `claude attach`. */
   name: string;
   running: boolean;
-  /** Raw state from the CLI (working, waiting, done…). */
+  /** Raw state from the CLI (working, waiting, done, failed…). */
   state: string;
   startedAt: number;
+}
+
+export type FindingSeverity = 'critical' | 'major' | 'minor' | 'nit';
+
+/** A finding of the `/pr-review` skill (its `findings.json`), most severe first. */
+export interface ReviewFinding {
+  id: number;
+  severity: FindingSeverity;
+  /** Repo-relative path. */
+  file: string;
+  /** Line in the PR head version, and the first line of a multi-line range. */
+  line: number | null;
+  startLine: number | null;
+  title: string;
+  /** The review comment, Markdown. */
+  body: string;
+  /** Exact replacement code for the lines, when the fix is that local. */
+  suggestion: string | null;
+}
+
+/** What a finished review session produced. */
+export interface ReviewResult {
+  /** Last answer of the session (Markdown), or null. */
+  text: string | null;
+  /** Findings saved by the skill during this session, or null when it saved none. */
+  findings: ReviewFinding[] | null;
+  /** Head commit the findings refer to, when known. */
+  head: string | null;
 }
 
 /** Status of a PR in the list, from most to least blocking. */

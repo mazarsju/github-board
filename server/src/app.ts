@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { REPOS } from '../../shared/config.ts';
 import { appStateSchema } from '../../shared/schema.ts';
 import type { SessionInfo } from '../../shared/types.ts';
-import { claudeCli, isLoopback, reviewName, toReviewSessions, type ClaudeCli } from './claude.ts';
+import { claudeCli, isLoopback, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type ClaudeCli } from './claude.ts';
 import { GitHubClient, GitHubError } from './github.ts';
 import type { StateStore } from './store.ts';
 
@@ -30,8 +30,6 @@ interface Session {
 }
 
 const COOKIE = 'gb_session';
-/** Skill run by the "Review" button. POC: a placeholder until the PR review skill exists. */
-export const REVIEW_PROMPT = '/standup';
 /**
  * Header the app sends to the review routes. Another website cannot add it to a request
  * to this server without a CORS preflight, which is not granted: this blocks cross-site
@@ -154,10 +152,11 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     res.status(500).json({ error: `${action} : ${(err as Error).message}` });
 
   api.post('/pulls/:owner/:repo/:number/review', localOnly, async (req, res) => {
-    const { repo, number } = pullParams.parse(req.params);
+    const { owner, repo, number } = pullParams.parse(req.params);
+    if (!REPOS.includes(`${owner}/${repo}`)) return void res.status(404).json({ error: 'Dépôt non suivi' });
     const name = reviewName(repo, number);
     try {
-      const output = await claude.startBackground(REVIEW_PROMPT, name);
+      const output = await claude.startBackground(reviewPrompt(owner, repo, number), name);
       res.json({ name, output });
     } catch (err) {
       claudeError(res, 'Lancement de Claude impossible', err);
@@ -175,11 +174,14 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
   api.get('/reviews/:id/result', localOnly, async (req, res) => {
     const { id } = z.object({ id: z.string().regex(/^[\w-]+$/) }).parse(req.params);
     try {
-      // The transcript is found from the CLI's own listing, never from a client-provided path.
+      // Files are found from the CLI's own listing (transcript id, session name mapped to a
+      // tracked repository), never from a client-provided path.
       const session = (await claude.listBackground()).find((s) => s.id === id);
       const text = session && /^[\w-]+$/.test(session.sessionId) ? await claude.readResult(session.sessionId) : null;
-      if (text === null) return void res.status(404).json({ error: 'Aucun résultat pour cette session.' });
-      res.json({ text });
+      const target = session && reviewTarget(session.name, REPOS);
+      const saved = target ? await claude.readFindings(target.owner, target.repo, target.number, session.startedAt) : null;
+      if (text === null && !saved) return void res.status(404).json({ error: 'Aucun résultat pour cette session.' });
+      res.json({ text, findings: saved?.findings ?? null, head: saved?.head ?? null });
     } catch (err) {
       claudeError(res, 'Résultat illisible', err);
     }

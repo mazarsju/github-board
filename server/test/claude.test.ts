@@ -1,8 +1,10 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { claudeCli, isLoopback, lastAnswer, reviewName, toReviewSessions, type BackgroundSession } from '../src/claude.ts';
+import {
+  claudeCli, isLoopback, lastAnswer, parseFindings, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
+} from '../src/claude.ts';
 
 let dir = '';
 afterEach(async () => {
@@ -70,6 +72,39 @@ JSON`);
     expect(await cli.readResult('unknown')).toBeNull();
     expect(await claudeCli({ configDir: join(dir, 'missing') }).readResult('s-1')).toBeNull();
   });
+
+  test('reads the findings the /pr-review skill saved for a PR, unless they predate the session', async () => {
+    dir = await realpath(await mkdtemp(join(tmpdir(), 'gb-claude-')));
+    const workdir = join(dir, 'DiliTrust-service-clm-7');
+    await mkdir(workdir);
+    await writeFile(join(workdir, 'findings.json'), JSON.stringify([
+      { id: 1, severity: 'minor', file: 'a.ts', line: 3, start_line: null, title: 'Edge case', body: 'Body', suggestion: null },
+    ]));
+    await writeFile(join(workdir, 'context.json'), JSON.stringify({ head: 'abcdef1234' }));
+    await utimes(join(workdir, 'findings.json'), 2000, 2000); // seconds
+    const cli = claudeCli({ findingsDir: dir });
+    expect(await cli.readFindings('DiliTrust', 'service-clm', 7, 1_000_000)).toEqual({
+      findings: [{ id: 1, severity: 'minor', file: 'a.ts', line: 3, startLine: null, title: 'Edge case', body: 'Body', suggestion: null }],
+      head: 'abcdef1234',
+    });
+    expect(await cli.readFindings('DiliTrust', 'service-clm', 7, 3_000_000)).toBeNull(); // from an earlier review
+    expect(await cli.readFindings('DiliTrust', 'service-clm', 8, 0)).toBeNull();
+  });
+});
+
+test('parseFindings keeps well-formed findings, most severe first', () => {
+  expect(parseFindings({ not: 'an array' })).toEqual([]);
+  expect(parseFindings([
+    { id: 2, severity: 'nit', file: 'b.ts', line: 1, title: 'Naming', body: 'Rename', suggestion: 'x' },
+    null,
+    { id: 3, severity: 'critical', file: 'a.ts', line: 10, start_line: 8, title: 'Crash', body: 'Fix it', suggestion: '' },
+    { id: 4, severity: 'weird', title: 'Unknown severity', line: -1 },
+    { id: 5, severity: 'major' }, // no title
+  ])).toEqual([
+    { id: 3, severity: 'critical', file: 'a.ts', line: 10, startLine: 8, title: 'Crash', body: 'Fix it', suggestion: null },
+    { id: 4, severity: 'minor', file: '', line: null, startLine: null, title: 'Unknown severity', body: '', suggestion: null },
+    { id: 2, severity: 'nit', file: 'b.ts', line: 1, startLine: null, title: 'Naming', body: 'Rename', suggestion: 'x' },
+  ]);
 });
 
 test('lastAnswer keeps the last text of the assistant, skipping tool calls and broken lines', () => {
@@ -89,6 +124,13 @@ describe('review sessions', () => {
 
   test('reviewName names the session after the PR', () => {
     expect(reviewName('service-clm', 16664)).toBe('review service-clm#16664');
+    expect(reviewPrompt('DiliTrust', 'service-clm', 16664)).toBe('/pr-review https://github.com/DiliTrust/service-clm/pull/16664');
+  });
+
+  test('reviewTarget finds the tracked PR of a review session', () => {
+    expect(reviewTarget('review service-clm#7', ['DiliTrust/service-clm'])).toEqual({ owner: 'DiliTrust', repo: 'service-clm', number: 7 });
+    expect(reviewTarget('review other#7', ['DiliTrust/service-clm'])).toBeNull();
+    expect(reviewTarget('review service-clm#7 ../x', ['DiliTrust/service-clm'])).toBeNull();
   });
 
   test('toReviewSessions maps review sessions to tracked PRs, latest one per PR', () => {
@@ -97,11 +139,13 @@ describe('review sessions', () => {
       s('old', 'review service-clm#7', 'done', 1),
       s('new', 'review service-clm#7', 'waiting', 3),
       s('w', 'review webapp-clm#2', 'done', 2),
+      s('f', 'review webapp-clm#5', 'failed', 2),
       s('x', 'review other-repo#1', 'done', 2), // not tracked
       s('y', 'my own session', 'working', 2),
     ], repos)).toEqual([
       { key: 'DiliTrust/service-clm#7', id: 'new', name: 'review service-clm#7', running: true, state: 'waiting', startedAt: 3 },
       { key: 'DiliTrust/webapp-clm#2', id: 'w', name: 'review webapp-clm#2', running: false, state: 'done', startedAt: 2 },
+      { key: 'DiliTrust/webapp-clm#5', id: 'f', name: 'review webapp-clm#5', running: false, state: 'failed', startedAt: 2 },
     ]);
   });
 });

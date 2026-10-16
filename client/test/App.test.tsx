@@ -76,7 +76,10 @@ function mockBackend() {
         reviews = [session('DiliTrust/service-clm#2', 'started', true)];
         return json(200, { name: 'review service-clm#2', output: 'abc' });
       case '/api/reviews': return json(200, reviews);
-      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">' });
+      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings: [
+        { id: 2, severity: 'minor', file: 'src/a b.ts', line: 12, startLine: 10, title: 'Erreur avalée', body: 'Le `catch` ignore **tout**.', suggestion: 'throw err;' },
+        { id: 1, severity: 'critical', file: 'src/db.ts', line: 3, startLine: null, title: 'Injection SQL', body: 'Requête concaténée.', suggestion: null },
+      ] });
       case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Lancement de Claude impossible : Not logged in' });
       default: {
         const m = /^\/api\/pulls\/DiliTrust\/([\w-]+)\/(\d+)\/details$/.exec(url.pathname);
@@ -313,6 +316,33 @@ test('a finished review shows its synthesis in "Actions pour moi" until marked a
   await waitFor(() => expect(saved.at(-1)?.settings.dismissedReviews).toEqual(['r2']));
   // The PR can be reviewed again.
   expect(within(await row('PR de DT_Public_API')).getByRole('button', { name: /Review avec Claude/ })).toBeInTheDocument();
+});
+
+test('the findings of a finished review are stacked under it and open their detail', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  reviews = [session('DiliTrust/DT_Public_API#1', 'r2', false)];
+  renderApp();
+
+  const section = await screen.findByRole('region', { name: 'Actions pour moi' });
+  const entry = within(section).getByRole('link', { name: 'PR de DT_Public_API' }).closest('tr')!;
+  expect(await within(entry).findByText('1 Critique')).toBeInTheDocument();
+  expect(within(entry).getByText('1 Mineur')).toBeInTheDocument();
+  // One row per finding, right under the PR, in the skill's order.
+  const first = entry.nextElementSibling as HTMLElement;
+  expect(first).toHaveTextContent('Erreur avalée');
+  expect(first).toHaveTextContent('src/a b.ts:10-12');
+  expect(first.nextElementSibling).toHaveTextContent('Injection SQL');
+
+  await user.click(within(first).getByRole('button'));
+  const dialog = await screen.findByRole('dialog', { name: 'Erreur avalée' });
+  expect(within(dialog).getByText('tout').tagName).toBe('STRONG');
+  expect(within(dialog).getByText('throw err;')).toBeInTheDocument();
+  expect(within(dialog).getByRole('link', { name: 'src/a b.ts:10-12' }))
+    .toHaveAttribute('href', 'https://github.com/DiliTrust/DT_Public_API/blob/abc1234/src/a%20b.ts#L10-L12');
+  expect(within(dialog).getByText(/^\/pick-change /)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole('button', { name: 'Fermer' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
 test('the filter narrows the list', async () => {
