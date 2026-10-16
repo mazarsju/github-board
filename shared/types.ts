@@ -107,6 +107,17 @@ export interface ReviewFinding {
   body: string;
   /** Exact replacement code for the lines, when the fix is that local. */
   suggestion: string | null;
+  /** Plain-words explanation of the problem for the user, in French; never posted. */
+  easySummary: string | null;
+  /** What was decided, from the app or `/pick-change`: posted on GitHub (see `url`) or dropped. */
+  decision: 'posted' | 'dropped' | null;
+  url: string | null;
+  /** Rewritten at the user's request. */
+  edited: boolean;
+  /** A Claude session is rewriting it. */
+  editing: boolean;
+  /** Why the last edit could not be applied. */
+  editError: string | null;
   /** The commented lines and their surroundings at the reviewed commit, when available. */
   code?: CodeExcerpt | null;
 }
@@ -116,6 +127,9 @@ export interface CodeExcerpt {
   start: number;
   lines: string[];
 }
+
+/** Where a finding is posted: inline on its lines, on its file (lines outside the diff), or on the PR. */
+export type FindingPlacement = 'inline' | 'file' | 'pr';
 
 /** What a finished review session produced. */
 export interface ReviewResult {

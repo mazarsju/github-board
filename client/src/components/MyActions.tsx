@@ -3,13 +3,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { matchesFilter } from '../../../shared/state.ts';
-import type { MyAction, PullRequest, ReviewFinding, ReviewSession } from '../../../shared/types.ts';
+import type { MyAction, PullRequest, ReviewSession } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { useAppState } from '../state/AppState.tsx';
 import { PrRow } from './PrRow.tsx';
 import { FindingDialog, findingPlace, SEVERITY, SynthesisDialog } from './ReviewDialogs.tsx';
 
 const COLUMNS = 6;
+/** How often a review's findings are checked while one of them is being edited. */
+const EDIT_POLL_MS = 5_000;
 
 function Reasons({ action: { approved, unanswered } }: { action: MyAction }) {
   return (
@@ -28,15 +30,18 @@ function Reasons({ action: { approved, unanswered } }: { action: MyAction }) {
 function ReviewEntry({ review, pr, refresh, onRead }: {
   review: ReviewSession; pr: PullRequest; refresh: number; onRead: () => void;
 }) {
-  const [open, setOpen] = useState<ReviewFinding | 'synthesis' | null>(null);
-  // Same query as the synthesis dialog: fetched once.
+  const [open, setOpen] = useState<number | 'synthesis' | null>(null);
+  // Same query as the synthesis dialog: fetched once, then again while a finding is being edited.
   const { data, error } = useQuery({
     queryKey: ['review-result', review.id],
     queryFn: () => api.reviewResult(review.id),
     staleTime: Infinity,
     retry: false,
+    refetchInterval: (q) => (q.state.data?.findings?.some((f) => f.editing) ? EDIT_POLL_MS : false),
   });
-  const findings = data?.findings ?? [];
+  // Rejected findings leave the list.
+  const findings = (data?.findings ?? []).filter((f) => f.decision !== 'dropped');
+  const opened = typeof open === 'number' ? findings.find((f) => f.id === open) : undefined;
   return (
     <>
       <PrRow row={{ pr, depth: 0 }} refresh={refresh} action={
@@ -50,17 +55,19 @@ function ReviewEntry({ review, pr, refresh, onRead }: {
       {findings.map((f) => (
         <tr key={f.id} className="finding-row">
           <td colSpan={COLUMNS}>
-            <button type="button" className="finding" onClick={() => setOpen(f)}>
+            <button type="button" className="finding" onClick={() => setOpen(f.id)}>
               <span className={`badge ${SEVERITY[f.severity][1]}`}>{SEVERITY[f.severity][0]}</span>
               <span className="finding-title">{f.title}</span>
               {f.file && <code className="muted">{findingPlace(f)}</code>}
               {f.suggestion && <span className="badge" title="Fix proposed">suggestion</span>}
+              {f.editing && <span className="badge wait" title="Claude is rewriting this finding">editing…</span>}
+              {f.decision === 'posted' && <span className="badge ok" title="Posted on GitHub">posted</span>}
             </button>
           </td>
         </tr>
       ))}
       {open === 'synthesis' && <SynthesisDialog review={review} onClose={() => setOpen(null)} onDismiss={onRead} />}
-      {open && open !== 'synthesis' && <FindingDialog finding={open} pr={pr} head={data?.head ?? null} onClose={() => setOpen(null)} />}
+      {opened && <FindingDialog finding={opened} pr={pr} head={data?.head ?? null} review={review.id} onClose={() => setOpen(null)} />}
     </>
   );
 }

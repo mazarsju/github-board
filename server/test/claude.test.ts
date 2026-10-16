@@ -1,9 +1,9 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  claudeCli, isLoopback, lastAnswer, parseFindings, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
+  claudeCli, isLoopback, lastAnswer, reviewName, reviewPrompt, reviewTarget, toReviewSessions, type BackgroundSession,
 } from '../src/claude.ts';
 
 let dir = '';
@@ -72,39 +72,6 @@ JSON`);
     expect(await cli.readResult('unknown')).toBeNull();
     expect(await claudeCli({ configDir: join(dir, 'missing') }).readResult('s-1')).toBeNull();
   });
-
-  test('reads the findings the /pr-review skill saved for a PR, unless they predate the session', async () => {
-    dir = await realpath(await mkdtemp(join(tmpdir(), 'gb-claude-')));
-    const workdir = join(dir, 'DiliTrust-service-clm-7');
-    await mkdir(workdir);
-    await writeFile(join(workdir, 'findings.json'), JSON.stringify([
-      { id: 1, severity: 'minor', file: 'a.ts', line: 3, start_line: null, title: 'Edge case', body: 'Body', suggestion: null },
-    ]));
-    await writeFile(join(workdir, 'context.json'), JSON.stringify({ head: 'abcdef1234' }));
-    await utimes(join(workdir, 'findings.json'), 2000, 2000); // seconds
-    const cli = claudeCli({ findingsDir: dir });
-    expect(await cli.readFindings('DiliTrust', 'service-clm', 7, 1_000_000)).toEqual({
-      findings: [{ id: 1, severity: 'minor', file: 'a.ts', line: 3, startLine: null, title: 'Edge case', body: 'Body', suggestion: null }],
-      head: 'abcdef1234',
-    });
-    expect(await cli.readFindings('DiliTrust', 'service-clm', 7, 3_000_000)).toBeNull(); // from an earlier review
-    expect(await cli.readFindings('DiliTrust', 'service-clm', 8, 0)).toBeNull();
-  });
-});
-
-test('parseFindings keeps well-formed findings, most severe first', () => {
-  expect(parseFindings({ not: 'an array' })).toEqual([]);
-  expect(parseFindings([
-    { id: 2, severity: 'nit', file: 'b.ts', line: 1, title: 'Naming', body: 'Rename', suggestion: 'x' },
-    null,
-    { id: 3, severity: 'critical', file: 'a.ts', line: 10, start_line: 8, title: 'Crash', body: 'Fix it', suggestion: '' },
-    { id: 4, severity: 'weird', title: 'Unknown severity', line: -1 },
-    { id: 5, severity: 'major' }, // no title
-  ])).toEqual([
-    { id: 3, severity: 'critical', file: 'a.ts', line: 10, startLine: 8, title: 'Crash', body: 'Fix it', suggestion: null },
-    { id: 4, severity: 'minor', file: '', line: null, startLine: null, title: 'Unknown severity', body: '', suggestion: null },
-    { id: 2, severity: 'nit', file: 'b.ts', line: 1, startLine: null, title: 'Naming', body: 'Rename', suggestion: 'x' },
-  ]);
 });
 
 test('lastAnswer keeps the last text of the assistant, skipping tool calls and broken lines', () => {

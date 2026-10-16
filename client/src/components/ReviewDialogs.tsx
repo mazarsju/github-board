@@ -1,10 +1,10 @@
 // Dialogs of the "Review" background sessions: how to follow a running one, the synthesis of a finished one
 // and the detail of one of its findings.
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { CodeExcerpt, FindingSeverity, PullRequest, ReviewFinding, ReviewSession } from '../../../shared/types.ts';
+import type { CodeExcerpt, FindingPlacement, FindingSeverity, PullRequest, ReviewFinding, ReviewSession } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { lineDiff, toLines, type DiffLine } from '../lib/diff.ts';
 import { Modal } from './Modal.tsx';
@@ -51,9 +51,9 @@ export function findingPlace(f: ReviewFinding): string {
 const pickChange = (pr: PullRequest) => `/pick-change ${pr.url}`;
 
 /** Markdown of a review answer. Raw HTML is not rendered; links open in a new tab. */
-function Synthesis({ text }: { text: string }) {
+function Synthesis({ text, className = 'synthesis', lang }: { text: string; className?: string; lang?: string }) {
   return (
-    <div className="synthesis markdown">
+    <div className={`${className} markdown`} lang={lang}>
       <Markdown remarkPlugins={[remarkGfm]} components={{
         a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
       }}>{text}</Markdown>
@@ -97,10 +97,112 @@ function suggestionDiff(code: CodeExcerpt, from: number, to: number, suggestion:
   return [...before, ...changed, ...after];
 }
 
-/** Detail of a finding, as GitHub shows a review comment: the code, the comment, the suggested change. */
-export function FindingDialog({ finding: f, pr, head, onClose }: {
-  finding: ReviewFinding; pr: PullRequest; head: string | null; onClose: () => void;
+/** Where a comment lands on GitHub, in words. */
+function placementText(mode: FindingPlacement, f: ReviewFinding): string {
+  if (mode === 'inline') return `Inline comment on ${findingPlace(f)}`;
+  if (mode === 'file') return `Comment on the file ${f.file} (the lines are outside the PR's diff)`;
+  return 'General PR comment, with a link to the lines (the file is not in the PR)';
+}
+
+/** Name of the session editing a finding (as the server names it). */
+const editSessionName = (pr: PullRequest, f: ReviewFinding) => `edit ${pr.repo}#${pr.number} finding ${f.id}`;
+
+type Step = 'view' | 'approve' | 'edit';
+
+/**
+ * Decision on a finding, at the bottom of its detail: approve (shows the exact comment and where
+ * it lands, then posts it on a second click), reject, or ask Claude to edit it.
+ */
+function FindingDecision({ finding: f, pr, review, step, setStep, onDone }: {
+  finding: ReviewFinding; pr: PullRequest; review: string; step: Step; setStep: (s: Step) => void; onDone: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [request, setRequest] = useState('');
+  const placement = useQuery({
+    queryKey: ['finding-placement', review, f.id, f.body, f.title, f.suggestion],
+    queryFn: () => api.findingPlacement(review, f.id),
+    enabled: step === 'approve',
+    retry: false,
+    staleTime: 0,
+  });
+  const run = async (action: () => Promise<unknown>, after: () => void) => {
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+      await queryClient.invalidateQueries({ queryKey: ['review-result', review] });
+      after();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (f.decision === 'posted') {
+    return <p className="decision ok">Posted on GitHub ✓ {f.url && <a href={f.url} target="_blank" rel="noopener noreferrer">See the comment</a>}</p>;
+  }
+  if (f.editing) {
+    return (
+      <p className="decision wait">
+        Claude is rewriting this finding… You will be asked again once it is done.{' '}
+        <span className="muted">To follow it: <code>claude attach "{editSessionName(pr, f)}"</code></span>
+      </p>
+    );
+  }
+  return (
+    <>
+      {f.editError && <p className="error">Last edit not applied: {f.editError}</p>}
+      {step === 'approve' && (
+        <section className="decision-step" aria-label="Comment to post">
+          <h3 className="finding-heading">Comment to post</h3>
+          {placement.isPending ? <p className="muted">Checking where it lands…</p>
+            : placement.error ? <p className="error">{placement.error.message}</p>
+              : <>
+                <p className="placement">{placementText(placement.data.mode, f)}, at the reviewed commit.</p>
+                <Synthesis text={placement.data.body} className="comment-preview" />
+              </>}
+        </section>
+      )}
+      {step === 'edit' && (
+        <label className="decision-step">What should change?
+          <textarea value={request} onChange={(e) => setRequest(e.target.value)} rows={3} maxLength={2000} autoFocus
+            placeholder="e.g. Make it shorter, drop the suggestion, mention the null case…" />
+        </label>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div className="decision-buttons">
+        {step === 'view' && <>
+          <button type="button" className="btn primary" onClick={() => setStep('approve')}>Approve</button>
+          <button type="button" className="btn" onClick={() => setStep('edit')}>Edit</button>
+          <button type="button" className="btn danger" disabled={busy} onClick={() => void run(() => api.rejectFinding(review, f.id), onDone)}>Reject</button>
+        </>}
+        {step === 'approve' && <>
+          <button type="button" className="btn primary" disabled={busy || !placement.data}
+            onClick={() => void run(() => api.postFinding(review, f.id, placement.data!), () => setStep('view'))}>
+            {busy ? 'Posting…' : 'Post on GitHub'}
+          </button>
+          <button type="button" className="btn" disabled={busy} onClick={() => setStep('view')}>Back</button>
+        </>}
+        {step === 'edit' && <>
+          <button type="button" className="btn primary" disabled={busy || !request.trim()}
+            onClick={() => void run(() => api.editFinding(review, f.id, request), () => setStep('view'))}>
+            {busy ? 'Sending…' : 'Send to Claude'}
+          </button>
+          <button type="button" className="btn" disabled={busy} onClick={() => setStep('view')}>Back</button>
+        </>}
+      </div>
+    </>
+  );
+}
+
+/** Detail of a finding, as GitHub shows a review comment: the code, the comment, the suggested change, and the decision. */
+export function FindingDialog({ finding: f, pr, head, review, onClose }: {
+  finding: ReviewFinding; pr: PullRequest; head: string | null; review: string; onClose: () => void;
+}) {
+  const [step, setStep] = useState<Step>('view');
   const [label, className] = SEVERITY[f.severity];
   const from = f.startLine && f.line && f.startLine < f.line ? f.startLine : f.line;
   const lines = f.line ? `#L${f.startLine && f.startLine < f.line ? `${f.startLine}-L${f.line}` : f.line}` : '';
@@ -111,10 +213,18 @@ export function FindingDialog({ finding: f, pr, head, onClose }: {
     <Modal title={f.title} subtitle={`${pr.repo}#${pr.number} · finding ${f.id}`} cancelLabel="Close" className="wide code" onClose={onClose}>
       <p className="finding-meta">
         <span className={`badge ${className}`}>{label}</span>
+        {f.edited && <span className="badge" title="Rewritten at your request">edited</span>}
         {f.file && (codeUrl
           ? <a href={codeUrl} target="_blank" rel="noopener noreferrer"><code>{findingPlace(f)}</code></a>
           : <code>{findingPlace(f)}</code>)}
       </p>
+      {f.easySummary && (
+        <details className="easy-summary">
+          <summary><span aria-hidden="true">👶</span> Easy explanation of the problem</summary>
+          {/* Written in French by the skill, for the user only. */}
+          <Synthesis text={f.easySummary} className="easy-text" lang="fr" />
+        </details>
+      )}
       {f.code && from && f.line && (
         <CodeBlock lines={numbered(f.code)} label="Commented code" marked={(l) => l.number! >= from && l.number! <= f.line!} />
       )}
@@ -125,7 +235,8 @@ export function FindingDialog({ finding: f, pr, head, onClose }: {
           ? <CodeBlock lines={suggestionDiff(f.code, from, f.line, f.suggestion)} label="Suggested change" />
           : <CodeBlock lines={toLines(f.suggestion).map((text) => ({ kind: 'add', text, number: null }))} label="Suggested change" />}
       </>}
-      <p className="hint">To post findings on GitHub: <code>{pickChange(pr)}</code></p>
+      <FindingDecision finding={f} pr={pr} review={review} step={step} setStep={setStep} onDone={onClose} />
+      <p className="hint">Or go through all the findings in Claude Code: <code>{pickChange(pr)}</code></p>
     </Modal>
   );
 }

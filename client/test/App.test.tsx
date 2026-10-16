@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { defaultState } from '../../shared/state.ts';
-import type { AppState, MyAction, PrDetails, PullRequest, ReviewSession } from '../../shared/types.ts';
+import type { AppState, MyAction, PrDetails, PullRequest, ReviewFinding, ReviewSession } from '../../shared/types.ts';
 import { App } from '../src/App.tsx';
 import { ToastProvider } from '../src/components/Toast.tsx';
 
@@ -42,6 +42,18 @@ let saved: AppState[];
 let initialState: AppState;
 let actions: MyAction[];
 let reviews: ReviewSession[];
+let findings: ReviewFinding[];
+let decisions: string[];
+
+const finding = (extra: Partial<ReviewFinding>): ReviewFinding => ({
+  id: 1, severity: 'minor', file: 'a.ts', line: 1, startLine: null, title: 'T', body: 'B', suggestion: null, easySummary: null,
+  decision: null, url: null, edited: false, editing: false, editError: null, ...extra,
+});
+const FINDINGS = (): ReviewFinding[] => [
+  finding({ id: 2, severity: 'minor', file: 'src/a b.ts', line: 12, startLine: 10, title: 'Erreur avalée', body: 'Le `catch` ignore **tout**.', easySummary: 'Quand `run` échoue, **personne** n’est prévenu.', suggestion: 'try {\n  run();\n} catch (err) {\n  throw err;\n}\n',
+    code: { start: 8, lines: ['// 8', 'function f() {', 'try {', '  run();', '} catch {}', '}', '// 14'] } }),
+  finding({ id: 1, severity: 'critical', file: 'src/db.ts', line: 3, title: 'Injection SQL', body: 'Requête concaténée.' }),
+];
 
 const session = (key: string, id: string, running: boolean): ReviewSession => ({
   key, id, name: `review ${key.split('/')[1]}`, running, state: running ? 'working' : 'done', startedAt: 1,
@@ -76,13 +88,19 @@ function mockBackend() {
         reviews = [session('DiliTrust/service-clm#2', 'started', true)];
         return json(200, { name: 'review service-clm#2', output: 'abc' });
       case '/api/reviews': return json(200, reviews);
-      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings: [
-        { id: 2, severity: 'minor', file: 'src/a b.ts', line: 12, startLine: 10, title: 'Erreur avalée', body: 'Le `catch` ignore **tout**.', suggestion: 'try {\n  run();\n} catch (err) {\n  throw err;\n}\n',
-          code: { start: 8, lines: ['// 8', 'function f() {', 'try {', '  run();', '} catch {}', '}', '// 14'] } },
-        { id: 1, severity: 'critical', file: 'src/db.ts', line: 3, startLine: null, title: 'Injection SQL', body: 'Requête concaténée.', suggestion: null },
-      ] });
+      case '/api/reviews/r2/result': return json(200, { text: '## Verdict\n\n**Rien de bloquant.**\n\n- Deux remarques [mineures](https://example.com/n)\n\n<img src=x onerror="alert(1)">', head: 'abc1234', findings });
       case '/api/pulls/DiliTrust/webapp-clm/1/review': return json(500, { error: 'Could not start Claude: Not logged in' });
       default: {
+        const f = /^\/api\/reviews\/r2\/findings\/(\d+)\/(\w+)$/.exec(url.pathname);
+        if (f) {
+          const finding = findings.find((x) => x.id === Number(f[1]))!;
+          const body = `**${finding.severity}**: ${finding.title}`;
+          if (f[2] === 'placement') return json(200, { mode: 'inline', body });
+          decisions.push(`${f[2]} ${f[1]}${init.body ? ' ' + String(init.body) : ''}`);
+          if (f[2] === 'post') return Object.assign(finding, { decision: 'posted', url: 'https://github.com/c/2' }), json(200, { url: 'https://github.com/c/2' });
+          if (f[2] === 'reject') return Object.assign(finding, { decision: 'dropped' }), json(204);
+          if (f[2] === 'edit') return Object.assign(finding, { editing: true }), json(200, { name: 'edit', id: 'e1' });
+        }
         const m = /^\/api\/pulls\/DiliTrust\/([\w-]+)\/(\d+)\/details$/.exec(url.pathname);
         if (m) return json(200, { ...DETAILS, ...DETAILS_BY_PR[`${m[1]}#${m[2]}`] });
         return json(404, { error: 'Route inconnue' });
@@ -101,7 +119,10 @@ const row = async (title: string) => {
   return (await within(list).findByRole('link', { name: title })).closest('tr')!;
 };
 
-beforeEach(() => { loggedIn = false; saved = []; initialState = defaultState(); actions = []; reviews = []; mockBackend(); });
+beforeEach(() => {
+  loggedIn = false; saved = []; initialState = defaultState(); actions = []; reviews = []; findings = FINDINGS(); decisions = [];
+  mockBackend();
+});
 afterEach(() => { vi.unstubAllGlobals(); });
 
 test('logs in, then shows the PR list and the inaccessible repositories', async () => {
@@ -340,6 +361,13 @@ test('the findings of a finished review are stacked under it and open their deta
   await user.click(within(first).getByRole('button'));
   const dialog = await screen.findByRole('dialog', { name: 'Erreur avalée' });
   expect(within(dialog).getByText('tout').tagName).toBe('STRONG');
+  // The easy explanation, in French, is collapsed until opened.
+  const easy = within(dialog).getByText('Easy explanation of the problem').closest('details')!;
+  expect(easy).not.toHaveAttribute('open');
+  await user.click(within(easy).getByText('Easy explanation of the problem'));
+  expect(easy).toHaveAttribute('open');
+  expect(within(easy).getByText('personne').tagName).toBe('STRONG');
+  expect(within(easy).getByText(/n’est prévenu/).closest('[lang]')).toHaveAttribute('lang', 'fr');
   // The commented code, lines 10 to 12 highlighted among their context.
   const code = within(dialog).getByRole('table', { name: 'Commented code' });
   const rows = within(code).getAllByRole('row');
@@ -356,6 +384,61 @@ test('the findings of a finished review are stacked under it and open their deta
   expect(within(dialog).getByText(/^\/pick-change /)).toBeInTheDocument();
   await user.click(within(dialog).getByRole('button', { name: 'Close' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+/** Opens the detail of the finding `title` of the finished review r2. */
+async function openFinding(user: ReturnType<typeof userEvent.setup>, title: string) {
+  reviews = [session('DiliTrust/DT_Public_API#1', 'r2', false)];
+  renderApp();
+  const section = await screen.findByRole('region', { name: 'Actions for me' });
+  await user.click(await within(section).findByRole('button', { name: new RegExp(title) }));
+  return { section, dialog: await screen.findByRole('dialog', { name: title }) };
+}
+
+test('approving a finding shows the exact comment and where it lands, and posts it on a second click', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  const { section, dialog } = await openFinding(user, 'Injection SQL');
+
+  await user.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  const preview = await within(dialog).findByRole('region', { name: 'Comment to post' });
+  expect(await within(preview).findByText('Inline comment on src/db.ts:3, at the reviewed commit.')).toBeInTheDocument();
+  expect(within(preview).getByText('critical').tagName).toBe('STRONG');
+  expect(decisions).toEqual([]); // nothing posted yet
+  await user.click(within(dialog).getByRole('button', { name: 'Post on GitHub' }));
+
+  expect(decisions).toEqual(['post 1 {"mode":"inline","body":"**critical**: Injection SQL"}']);
+  expect(await within(dialog).findByRole('link', { name: 'See the comment' })).toHaveAttribute('href', 'https://github.com/c/2');
+  expect(within(dialog).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+  expect(within(within(section).getByRole('button', { name: /Injection SQL/ })).getByText('posted')).toBeInTheDocument();
+});
+
+test('rejecting a finding removes it from the list', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  const { section, dialog } = await openFinding(user, 'Injection SQL');
+  await user.click(within(dialog).getByRole('button', { name: 'Reject' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(decisions).toEqual(['reject 1']);
+  await waitFor(() => expect(within(section).queryByText('Injection SQL')).not.toBeInTheDocument());
+  expect(within(section).getByText('Erreur avalée')).toBeInTheDocument();
+});
+
+test('editing a finding sends the request to Claude, then waits for the new version', async () => {
+  loggedIn = true;
+  const user = userEvent.setup();
+  const { section, dialog } = await openFinding(user, 'Injection SQL');
+  await user.click(within(dialog).getByRole('button', { name: 'Edit' }));
+  const send = within(dialog).getByRole('button', { name: 'Send to Claude' });
+  expect(send).toBeDisabled();
+  await user.type(within(dialog).getByLabelText('What should change?'), 'Plus court');
+  await user.click(send);
+
+  expect(decisions).toEqual(['edit 1 {"request":"Plus court"}']);
+  // Neither posted nor rejected: the finding waits for its new version, then gets the choice again.
+  expect(await within(dialog).findByText(/Claude is rewriting this finding/)).toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+  expect(within(within(section).getByRole('button', { name: /Injection SQL/ })).getByText('editing…')).toBeInTheDocument();
 });
 
 test('the filter narrows the list', async () => {

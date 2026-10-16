@@ -1,6 +1,6 @@
 // HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
-  AppState, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
+  AppState, FindingPlacement, MyAction, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewResult, ReviewSession, SessionInfo,
 } from '../../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -30,6 +30,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 /** Required by the server on the review routes: a request from another website cannot carry it. */
 const LOCAL = { 'X-Github-Board': '1' };
+const findingPath = (review: string, finding: number) => `/reviews/${encodeURIComponent(review)}/findings/${finding}`;
 
 /** Limits the number of concurrent requests (PR details: 4 GitHub calls each). */
 function limiter(max: number) {
@@ -77,6 +78,17 @@ export const api = {
   reviews: () => request<ReviewSession[]>('/reviews', { headers: LOCAL }),
   /** Final answer and findings of a finished review session. */
   reviewResult: (id: string) => request<ReviewResult>(`/reviews/${encodeURIComponent(id)}/result`, { headers: LOCAL }),
+  /** The exact comment a finding would be posted as, and where. */
+  findingPlacement: (review: string, finding: number) =>
+    request<{ mode: FindingPlacement; body: string }>(`${findingPath(review, finding)}/placement`, { headers: LOCAL }),
+  /** Posts the approved comment, refused when it or its placement changed since. */
+  postFinding: (review: string, finding: number, approved: { mode: FindingPlacement; body: string }) =>
+    request<{ url: string }>(`${findingPath(review, finding)}/post`, { method: 'POST', headers: LOCAL, body: JSON.stringify(approved) }),
+  rejectFinding: (review: string, finding: number) =>
+    request<void>(`${findingPath(review, finding)}/reject`, { method: 'POST', headers: LOCAL }),
+  /** Asks a background Claude session to rewrite the finding. */
+  editFinding: (review: string, finding: number, req: string) =>
+    request<{ name: string; id: string }>(`${findingPath(review, finding)}/edit`, { method: 'POST', headers: LOCAL, body: JSON.stringify({ request: req }) }),
   details: (pr: PullRequest) => detailsLimit(() =>
     request<PrDetails>(`/pulls/${pr.owner}/${pr.repo}/${pr.number}/details?${new URLSearchParams({ updatedAt: pr.updatedAt })}`)),
 };
