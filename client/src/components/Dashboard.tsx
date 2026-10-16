@@ -18,7 +18,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
   const [settingsOpen, setSettingsOpen] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
 
-  const fetching = useIsFetching({ queryKey: ['search'] }) > 0;
+  const fetching = useIsFetching({ queryKey: ['pulls'] }) > 0;
   const rate = useQuery({ queryKey: ['rate'], queryFn: api.rate, refetchInterval: 15_000 });
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   useEffect(() => {
@@ -27,7 +27,7 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
     void queryClient.invalidateQueries({ queryKey: ['rate'] });
   }, [fetching, queryClient]);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['search'] });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['pulls'] });
 
   // Shortcuts: `/` filter, `r` refresh.
   useEffect(() => {
@@ -40,11 +40,8 @@ export function Dashboard({ session, onLogout }: { session: SessionInfo; onLogou
     return () => document.removeEventListener('keydown', onKey);
   });
 
-  const r = rate.data;
-  const rateText = [
-    r?.core && `API ${r.core.remaining}/${r.core.limit}`,
-    r?.search && `Recherche ${r.search.remaining}/${r.search.limit}`,
-  ].filter(Boolean).join(' · ');
+  const core = rate.data?.core;
+  const rateText = core ? `API ${core.remaining}/${core.limit}` : '';
 
   return (
     <>

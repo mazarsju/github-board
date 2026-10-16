@@ -1,15 +1,18 @@
-// List view: every open PR of the tracked repositories, one compact row per PR, grouped by repository.
+// List view: every open PR of the tracked repositories, one compact row per PR,
+// grouped by repository, stacked PRs kept together under the PR they build on.
 import { useQuery } from '@tanstack/react-query';
-import { listQuery, REQUIRED_APPROVALS } from '../../../shared/config.ts';
-import { groupByRepo, matchesFilter, prStatus, toggleCollapsed } from '../../../shared/state.ts';
-import type { PrDetails, PrStatus, PullRequest } from '../../../shared/types.ts';
+import type { CSSProperties } from 'react';
+import { REQUIRED_APPROVALS } from '../../../shared/config.ts';
+import { groupByRepo, matchesFilter, orderStacks, prStatus, toggleCollapsed } from '../../../shared/state.ts';
+import type { PrDetails, PrStatus, StackedPr } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { age } from '../lib/format.ts';
 import { useAppState } from '../state/AppState.tsx';
 
-const QUERY = listQuery();
-/** Maximum page size of the GitHub search API. */
+/** Number of PRs shown: the newest ones across the tracked repositories (each costs ~4 API calls for its details). */
 const LIMIT = 100;
+/** Deepest indentation of a stacked PR; deeper levels stay aligned on it. */
+const MAX_INDENT = 6;
 /** GitHub computes mergeability lazily: poll a few times while it is still "unknown". */
 const UNKNOWN_POLL_MS = 10_000;
 const UNKNOWN_MAX_POLLS = 5;
@@ -35,8 +38,8 @@ export function PrList({ filter }: { filter: string }) {
   const { refresh, collapsed } = state.settings;
   const toggle = (repo: string) => update((s) => ({ ...s, settings: toggleCollapsed(s.settings, repo) }));
   const { data, error, isPending } = useQuery({
-    queryKey: ['search', QUERY, 'created', LIMIT],
-    queryFn: () => api.search(QUERY, 'created', LIMIT),
+    queryKey: ['pulls', LIMIT],
+    queryFn: () => api.pulls(LIMIT),
     refetchInterval: refresh > 0 ? refresh * 1000 : false,
   });
   const all = data?.items ?? [];
@@ -74,7 +77,10 @@ export function PrList({ filter }: { filter: string }) {
                     </button>
                   </th>
                 </tr>
-                {open && prs.map((pr) => <PrRow key={pr.key} pr={pr} refresh={refresh} />)}
+                {open && orderStacks(prs).map((row, i, rows) => (
+                  // The last row of a stack is followed by the next root (depth 0), or by nothing.
+                  <PrRow key={row.pr.key} row={row} stackEnd={!rows[i + 1]?.depth} refresh={refresh} />
+                ))}
               </tbody>
             );
           })}
@@ -97,7 +103,7 @@ export function PrList({ filter }: { filter: string }) {
   );
 }
 
-function PrRow({ pr, refresh }: { pr: PullRequest; refresh: number }) {
+function PrRow({ row: { pr, depth, stackSize = 1, parent }, stackEnd, refresh }: { row: StackedPr; stackEnd: boolean; refresh: number }) {
   const { data: d, error } = useQuery({
     queryKey: ['details', pr.key, pr.updatedAt],
     queryFn: () => api.details(pr),
@@ -108,10 +114,15 @@ function PrRow({ pr, refresh }: { pr: PullRequest; refresh: number }) {
   const status = d ? prStatus(pr, d) : pr.draft ? 'draft' : null;
   const loading = <span className="muted" title={error ? error.message : 'Chargement…'}>{error ? '—' : '…'}</span>;
 
+  const inStack = depth > 0 || stackSize > 1;
+  const rowClass = inStack ? `in-stack${stackEnd ? ' stack-end' : ''}` : undefined;
+
   return (
-    <tr data-key={pr.key}>
-      <td className="title">
+    <tr data-key={pr.key} className={rowClass}>
+      <td className={depth ? 'title stacked' : 'title'} style={depth ? { '--depth': Math.min(depth, MAX_INDENT) } as CSSProperties : undefined}>
+        {parent && <span className="stack-arrow" title={`Empilée sur #${parent.number} (${pr.baseRef})`}>↳ </span>}
         <a href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.title}>{pr.title}</a> <span className="muted">#{pr.number}</span>
+        {stackSize > 1 && <span className="stack-tag" title={`${stackSize} PRs empilées à partir de celle-ci`}>stack · {stackSize}</span>}
       </td>
       <td className="author">
         {pr.author ? <><img src={`${pr.author.avatar}&s=32`} alt="" loading="lazy" /> {pr.author.login}</> : '—'}

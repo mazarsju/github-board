@@ -1,4 +1,4 @@
-// Application Express : API REST du board + service du frontend compilé.
+// Express application: the board's REST API + serving of the built frontend.
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,11 +12,11 @@ import type { StateStore } from './store.ts';
 
 export interface AppOptions {
   store: StateStore;
-  /** Token GitHub fourni par l'environnement : partagé, pas de connexion requise. */
+  /** GitHub token provided by the environment: shared, no login required. */
   envToken?: string;
-  /** Fabrique de clients GitHub (remplaçable dans les tests). */
+  /** GitHub client factory (replaceable in tests). */
   createClient?: (token: string) => GitHubClient;
-  /** Dossier du frontend compilé à servir (production). */
+  /** Folder of the built frontend to serve (production). */
   staticDir?: string;
 }
 
@@ -28,10 +28,8 @@ interface Session {
 
 const COOKIE = 'gb_session';
 
-const searchQuery = z.object({
-  q: z.string().min(1).max(1000),
-  sort: z.enum(['updated', 'created', 'comments']).default('updated'),
-  limit: z.coerce.number().int().min(1).max(100).default(30),
+const pullsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
 });
 
 function readCookie(req: Request, name: string): string | undefined {
@@ -44,7 +42,7 @@ function readCookie(req: Request, name: string): string | undefined {
 
 export function createApp({ store, envToken, createClient = (t) => new GitHubClient(t), staticDir }: AppOptions) {
   const app = express();
-  const sessions = new Map<string, Session>(); // id de session (cookie) → session
+  const sessions = new Map<string, Session>(); // session id (cookie) → session
   let envSession: Promise<Session> | null = null;
 
   async function openSession(token: string): Promise<Session> {
@@ -79,7 +77,7 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     res.json(sessionInfo(session));
   });
 
-  // Toutes les routes suivantes exigent une session.
+  // Every following route requires a session.
   api.use(async (req, res, next) => {
     const session = await currentSession(req);
     if (!session) return void res.status(401).json({ error: 'Non connecté' });
@@ -113,9 +111,9 @@ export function createApp({ store, envToken, createClient = (t) => new GitHubCli
     res.json(await session(res).client.checkRepoAccess(REPOS));
   });
 
-  api.get('/search', async (req, res) => {
-    const { q, sort, limit } = searchQuery.parse(req.query);
-    res.json(await session(res).client.searchPRs(q, { sort, limit }));
+  api.get('/pulls', async (req, res) => {
+    const { limit } = pullsQuery.parse(req.query);
+    res.json(await session(res).client.listOpenPRs(REPOS, limit));
   });
 
   api.get('/pulls/:owner/:repo/:number/details', async (req, res) => {

@@ -1,6 +1,6 @@
 // HTTP client of the backend (/api). The GitHub token is never handled by the browser.
 import type {
-  AppState, PrDetails, PullRequest, RateInfo, RepoAccess, SearchResult, SessionInfo, SortKey,
+  AppState, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, SessionInfo,
 } from '../../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -61,8 +61,8 @@ export const api = {
   saveState: (state: AppState) => request<void>('/state', { method: 'PUT', body: JSON.stringify(state) }),
   repoAccess: () => request<RepoAccess[]>('/repos/access'),
   rate: () => request<RateInfo>('/rate'),
-  search: (q: string, sort: SortKey, limit: number) =>
-    request<SearchResult>(`/search?${new URLSearchParams({ q, sort, limit: String(limit) })}`),
+  /** Open PRs of the tracked repositories, newest first. */
+  pulls: (limit: number) => request<PullList>(`/pulls?${new URLSearchParams({ limit: String(limit) })}`),
   details: (pr: PullRequest) => detailsLimit(() =>
     request<PrDetails>(`/pulls/${pr.owner}/${pr.repo}/${pr.number}/details?${new URLSearchParams({ updatedAt: pr.updatedAt })}`)),
 };

@@ -1,22 +1,17 @@
 import { describe, expect, test } from 'vitest';
-import { listQuery, REPOS, REQUIRED_APPROVALS } from './config.ts';
-import { defaultState, groupByRepo, matchesFilter, migrate, prStatus, toggleCollapsed } from './state.ts';
+import { REPOS, REQUIRED_APPROVALS } from './config.ts';
+import { defaultState, groupByRepo, matchesFilter, migrate, orderStacks, prStatus, toggleCollapsed } from './state.ts';
 import type { PullRequest } from './types.ts';
 
 const pr = (n: number, extra: Partial<PullRequest> = {}): PullRequest => ({
   key: `DiliTrust/service-clm#${n}`, owner: 'DiliTrust', repo: 'service-clm', number: n,
   title: `PR ${n}`, url: '', draft: false, author: { login: 'alice', avatar: '' },
-  createdAt: '', updatedAt: '', ...extra,
+  baseRef: 'develop', headRef: `branch-${n}`, createdAt: '', updatedAt: '', ...extra,
 });
 
 describe('config', () => {
   test('REPOS lists the tracked DiliTrust repositories', () => {
     expect(REPOS).toEqual(['DiliTrust/service-clm', 'DiliTrust/DT_Public_API', 'DiliTrust/webapp-clm']);
-  });
-
-  test('listQuery targets the open PRs of every tracked repository', () => {
-    expect(listQuery(['a/b', 'c/d'])).toBe('is:open repo:a/b repo:c/d');
-    for (const r of REPOS) expect(listQuery()).toContain(`repo:${r}`);
   });
 
   test('a PR needs 2 approvals', () => {
@@ -84,6 +79,52 @@ describe('groupByRepo', () => {
     expect(groupByRepo([at('other', 1), at('service-clm', 2)], ['DiliTrust/service-clm']).map((g) => g.repo))
       .toEqual(['DiliTrust/service-clm', 'DiliTrust/other']);
     expect(groupByRepo([])).toEqual([]);
+  });
+});
+
+describe('orderStacks', () => {
+  /** PR `n` created on day `day`, stacked on PR `on` (its base is that PR's branch). */
+  const at = (n: number, day: number, on?: number) =>
+    pr(n, { createdAt: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z`, baseRef: on ? `branch-${on}` : 'develop' });
+  const view = (rows: ReturnType<typeof orderStacks>) =>
+    rows.map((r) => [r.pr.number, r.depth, r.stackSize ?? null, r.parent?.number ?? null]);
+
+  test('standalone PRs keep their order, each as a stack of one', () => {
+    expect(view(orderStacks([at(3, 3), at(2, 2), at(1, 1)]))).toEqual([[3, 0, 1, null], [2, 0, 1, null], [1, 0, 1, null]]);
+  });
+
+  test('a chain of stacked PRs follows its root, one level deeper each time', () => {
+    // Newest first, as listed by GitHub: 3 is stacked on 2, itself stacked on 1.
+    expect(view(orderStacks([at(3, 3, 2), at(9, 2), at(2, 2, 1), at(1, 1)]))).toEqual([
+      [1, 0, 3, null], [2, 1, null, 1], [3, 2, null, 2], [9, 0, 1, null],
+    ]);
+  });
+
+  test('a stack is placed where its newest PR is', () => {
+    // 5 (newest overall) is stacked on 1 (oldest): the stack comes before 4.
+    expect(view(orderStacks([at(5, 5, 1), at(4, 4), at(1, 1)])).map(([n]) => n)).toEqual([1, 5, 4]);
+  });
+
+  test('a PR with several stacked children forms a tree, oldest child first', () => {
+    expect(view(orderStacks([at(4, 4, 2), at(3, 3, 1), at(2, 2, 1), at(1, 1)]))).toEqual([
+      [1, 0, 4, null], [2, 1, null, 1], [4, 2, null, 2], [3, 1, null, 1],
+    ]);
+  });
+
+  test('a PR stacked on a PR missing from the list stands alone', () => {
+    expect(view(orderStacks([at(2, 2, 7)]))).toEqual([[2, 0, 1, null]]);
+  });
+
+  test('a PR from a fork cannot be the base of another PR', () => {
+    expect(view(orderStacks([at(2, 2, 1), pr(1, { headRef: null, createdAt: '2026-10-01T00:00:00Z' })]))).toEqual([
+      [2, 0, 1, null], [1, 0, 1, null],
+    ]);
+  });
+
+  test('branch cycles do not loop and keep every PR', () => {
+    const rows = orderStacks([at(2, 2, 1), at(1, 1, 2)]);
+    expect(rows.map((r) => r.pr.number).sort()).toEqual([1, 2]);
+    expect(rows[0]!.depth).toBe(0);
   });
 });
 

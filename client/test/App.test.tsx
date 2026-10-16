@@ -12,7 +12,7 @@ const SESSION = { user: { login: 'alice', avatarUrl: 'https://avatar' }, envToke
 const pr = (repo: string, n: number, title: string, extra: Partial<PullRequest> = {}): PullRequest => ({
   key: `DiliTrust/${repo}#${n}`, owner: 'DiliTrust', repo, number: n, title,
   url: `https://github.com/DiliTrust/${repo}/pull/${n}`, draft: false,
-  author: { login: 'bob', avatar: 'https://a?v=4' },
+  author: { login: 'bob', avatar: 'https://a?v=4' }, baseRef: 'develop', headRef: `${repo}-${n}`,
   createdAt: '2026-10-15T10:00:00Z', updatedAt: '2026-10-15T10:00:00Z', ...extra,
 });
 
@@ -21,7 +21,8 @@ const PRS = [
   pr('service-clm', 1, 'PR de service-clm'),
   pr('DT_Public_API', 1, 'PR de DT_Public_API'),
   pr('webapp-clm', 1, 'PR de webapp-clm', { author: { login: 'carol', avatar: 'https://c?v=4' } }),
-  pr('service-clm', 2, 'Refonte service', { createdAt: '2026-10-01T10:00:00Z' }),
+  // Stacked on service-clm#1: its base branch is that PR's branch.
+  pr('service-clm', 2, 'Refonte service', { createdAt: '2026-10-01T10:00:00Z', baseRef: 'service-clm-1' }),
   pr('webapp-clm', 2, 'Brouillon webapp', { draft: true }),
   pr('DT_Public_API', 2, 'CI cassée', { draft: true }),
 ];
@@ -62,11 +63,7 @@ function mockBackend() {
         { repo: 'DiliTrust/service-clm', ok: true },
         { repo: 'DiliTrust/webapp-clm', ok: false, status: 404, error: 'Not Found' },
       ]);
-      case '/api/search': {
-        const q = url.searchParams.get('q') ?? '';
-        const items = PRS.filter((p) => q.startsWith('is:open') && q.includes(`repo:DiliTrust/${p.repo}`));
-        return json(200, { total: items.length, items });
-      }
+      case '/api/pulls': return json(200, { total: PRS.length, items: PRS });
       default: {
         const m = /^\/api\/pulls\/DiliTrust\/([\w-]+)\/(\d+)\/details$/.exec(url.pathname);
         if (m) return json(200, { ...DETAILS, ...DETAILS_BY_PR[`${m[1]}#${m[2]}`] });
@@ -148,6 +145,25 @@ test('PRs are grouped under one separator per project, in the configured order',
   expect(titles(groups[0]!)).toEqual(['PR de service-clm', 'Refonte service']);
   expect(titles(groups[1]!)).toEqual(['PR de DT_Public_API', 'CI cassée']);
   expect(titles(groups[2]!)).toEqual(['PR de webapp-clm', 'Brouillon webapp']);
+});
+
+test('a stacked PR is listed right under the PR it builds on, indented', async () => {
+  loggedIn = true;
+  renderApp();
+
+  const root = await row('PR de service-clm');
+  const child = await row('Refonte service');
+  expect(root.nextElementSibling).toBe(child);
+  expect(within(root).getByText('stack · 2')).toBeInTheDocument();
+  expect(within(child).getByTitle('Empilée sur #1 (service-clm-1)')).toHaveTextContent('↳');
+  expect(root).toHaveClass('in-stack');
+  expect(root).not.toHaveClass('stack-end');
+  expect(child).toHaveClass('in-stack', 'stack-end'); // last PR of the stack: shorter bar
+  expect(within(child).getAllByRole('cell')[0]).toHaveClass('stacked');
+
+  const standalone = await row('PR de DT_Public_API');
+  expect(standalone).not.toHaveClass('in-stack');
+  expect(within(standalone).queryByText(/stack ·/)).not.toBeInTheDocument();
 });
 
 test('a project group collapses and expands, and the choice is saved', async () => {

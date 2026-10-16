@@ -27,26 +27,60 @@ describe('GitHubClient', () => {
     ]);
   });
 
-  test('searchPRs adds is:pr, sends the token and normalises the results', async () => {
-    const fetch = mockFetch({
-      '/search/issues': [200, {
-        total_count: 1,
-        items: [{ number: 7, title: 'T', html_url: 'u', draft: true, repository_url: 'https://api.github.com/repos/DiliTrust/service-clm',
-          user: { login: 'bob', avatar_url: 'a' }, created_at: 'c', updated_at: 'u' }],
-      }],
+  /** Open PR as listed by GET /repos/{repo}/pulls. */
+  const pull = (n: number, created: string, extra: object = {}) => ({
+    number: n, title: `T${n}`, html_url: `u${n}`, draft: false, user: { login: 'bob', avatar_url: 'a' },
+    base: { ref: 'develop' }, head: { ref: `b${n}`, repo: { full_name: 'o/r' } }, created_at: created, updated_at: 'u', ...extra,
+  });
+
+  /** Mocks GET /repos/{repo}/pulls pages: repo → pages of PRs; other repos answer `missing`. */
+  function mockPulls(pages: Record<string, unknown[][]>, missing = 404) {
+    const fetch = vi.fn(async (url: string) => {
+      const { pathname, searchParams } = new URL(url);
+      const repo = /^\/repos\/(.+)\/pulls$/.exec(pathname)?.[1] ?? '';
+      const page = pages[repo]?.[Number(searchParams.get('page')) - 1];
+      const headers = { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': '42', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '1' };
+      if (!pages[repo]) return new Response(JSON.stringify({ message: 'Not Found' }), { status: missing, headers });
+      return new Response(JSON.stringify(page ?? []), { status: 200, headers });
     });
+    vi.stubGlobal('fetch', fetch);
+    return fetch;
+  }
+
+  test('listOpenPulls reads every page, sends the token and normalises PRs', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => pull(200 - i, '2026-10-02'));
+    const fetch = mockPulls({ 'o/r': [full, [pull(1, '2026-10-01', {
+      draft: true, base: { ref: 'b7' }, head: { ref: 'feat', repo: { full_name: 'fork/r' } },
+    })]] });
     const client = new GitHubClient('secret');
-    const { total, items } = await client.searchPRs('repo:DiliTrust/service-clm', { limit: 500 });
+    const items = await client.listOpenPulls('o/r');
+    expect(items).toHaveLength(101);
+    expect(fetch).toHaveBeenCalledTimes(2);
     const [url, init] = fetch.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(new URL(url).searchParams.get('q')).toBe('is:pr repo:DiliTrust/service-clm');
-    expect(new URL(url).searchParams.get('per_page')).toBe('100');
+    expect(Object.fromEntries(new URL(url).searchParams)).toMatchObject({ state: 'open', sort: 'created', direction: 'desc', per_page: '100', page: '1' });
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer secret');
-    expect(total).toBe(1);
     expect(items[0]).toEqual({
-      key: 'DiliTrust/service-clm#7', owner: 'DiliTrust', repo: 'service-clm', number: 7, title: 'T', url: 'u',
-      draft: true, author: { login: 'bob', avatar: 'a' }, createdAt: 'c', updatedAt: 'u',
+      key: 'o/r#200', owner: 'o', repo: 'r', number: 200, title: 'T200', url: 'u200', draft: false,
+      author: { login: 'bob', avatar: 'a' }, baseRef: 'develop', headRef: 'b200', createdAt: '2026-10-02', updatedAt: 'u',
     });
+    // A PR from a fork has no usable head branch here.
+    expect(items[100]).toMatchObject({ number: 1, draft: true, baseRef: 'b7', headRef: null });
     expect(client.rate.core).toEqual({ remaining: 42, limit: 5000, reset: 1000 });
+  });
+
+  test('listOpenPRs merges repositories newest first, truncates and skips unreadable ones', async () => {
+    mockPulls({
+      'o/a': [[pull(3, '2026-10-03'), pull(1, '2026-10-01')]],
+      'o/b': [[pull(2, '2026-10-02')]],
+    });
+    const { total, items } = await new GitHubClient('t').listOpenPRs(['o/a', 'o/b', 'o/private'], 2);
+    expect(total).toBe(3);
+    expect(items.map((p) => p.key)).toEqual(['o/a#3', 'o/b#2']);
+  });
+
+  test('listOpenPRs reports other GitHub errors', async () => {
+    mockPulls({}, 500);
+    await expect(new GitHubClient('t').listOpenPRs(['o/a'], 10)).rejects.toMatchObject({ status: 500 });
   });
 
   /** Routes of a PR's details: the PR, its reviews and the CI of its head commit "abc". */

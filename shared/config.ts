@@ -8,8 +8,3 @@ export const REPOS: readonly string[] = [
 
 /** Number of approvals a PR needs to be mergeable. */
 export const REQUIRED_APPROVALS = 2;
-
-/** GitHub search query listing every open PR of the given repositories (repo: qualifiers are OR-ed). */
-export function listQuery(repos: readonly string[] = REPOS): string {
-  return `is:open ${repos.map((r) => `repo:${r}`).join(' ')}`;
-}

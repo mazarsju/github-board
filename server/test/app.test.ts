@@ -18,9 +18,9 @@ class FakeClient extends GitHubClient {
   override async checkRepoAccess(repos: readonly string[]) {
     return repos.map((repo) => ({ repo, ok: repo !== 'DiliTrust/webapp-clm', status: 404 }));
   }
-  override async searchPRs(query: string) {
-    if (query.includes('bad')) throw new GitHubError('Validation Failed', 422);
-    return { total: 0, items: [] };
+  override async listOpenPRs(repos: readonly string[], limit: number) {
+    if (limit === 13) throw new GitHubError('Server Error', 500);
+    return { total: repos.length, items: [] };
   }
 }
 
@@ -87,13 +87,12 @@ describe('API', () => {
     expect(res.body.filter((r: { ok: boolean }) => !r.ok).map((r: { repo: string }) => r.repo)).toEqual(['DiliTrust/webapp-clm']);
   });
 
-  test('search: validation and forwarded GitHub errors', async () => {
+  test('pulls: tracked repositories, validation and forwarded GitHub errors', async () => {
     const { call } = await start({ envToken: 'good' });
-    expect((await call('/search?q=is:open')).body).toEqual({ total: 0, items: [] });
-    expect((await call('/search')).status).toBe(400);
-    expect((await call('/search?q=x&limit=500')).status).toBe(400);
-    const bad = await call('/search?q=bad');
-    expect(bad).toMatchObject({ status: 422, body: { error: 'Validation Failed' } });
+    expect((await call('/pulls')).body).toEqual({ total: REPOS.length, items: [] });
+    expect((await call('/pulls?limit=0')).status).toBe(400);
+    expect((await call('/pulls?limit=5000')).status).toBe(400);
+    expect(await call('/pulls?limit=13')).toMatchObject({ status: 502, body: { error: 'Server Error' } });
   });
 
   test('with GITHUB_TOKEN: automatic session, manual login refused', async () => {

@@ -1,6 +1,6 @@
 // Pure logic: default state, migration, PR filter, grouping and status.
 import { REPOS, REQUIRED_APPROVALS } from './config.ts';
-import type { AppState, PrDetails, PrStatus, PullRequest, Settings } from './types.ts';
+import type { AppState, PrDetails, PrStatus, PullRequest, Settings, StackedPr } from './types.ts';
 
 export function defaultState(): AppState {
   return { settings: { refresh: 300, theme: 'auto', collapsed: [] } };
@@ -41,6 +41,48 @@ export function groupByRepo(prs: PullRequest[], repos: readonly string[] = REPOS
     groups.set(repo, [...(groups.get(repo) ?? []), pr]);
   }
   return [...groups].filter(([, list]) => list.length).map(([repo, list]) => ({ repo, prs: list }));
+}
+
+/**
+ * Orders the PRs of one repository so that stacked PRs sit together: a PR whose base branch is
+ * another listed PR's branch comes right after it, one level deeper. Stacks (and standalone PRs)
+ * keep the input order of their newest PR; inside a stack, PRs follow the stack, oldest sibling first.
+ */
+export function orderStacks(prs: PullRequest[]): StackedPr[] {
+  const byHead = new Map<string, PullRequest>();
+  for (const pr of prs) if (pr.headRef) byHead.set(pr.headRef, pr);
+  const parentOf = (pr: PullRequest) => {
+    const parent = byHead.get(pr.baseRef);
+    return parent && parent !== pr ? parent : undefined;
+  };
+  const children = new Map<PullRequest, PullRequest[]>();
+  for (const pr of prs) {
+    const parent = parentOf(pr);
+    if (parent) children.set(parent, [...(children.get(parent) ?? []), pr]);
+  }
+  const rank = new Map(prs.map((pr, i) => [pr, i]));
+  const placed = new Set<PullRequest>();
+
+  // Depth-first walk of one stack; `placed` also guards against branch cycles.
+  const walk = (pr: PullRequest, depth: number, out: StackedPr[]) => {
+    if (placed.has(pr)) return;
+    placed.add(pr);
+    const parent = depth ? parentOf(pr) : undefined;
+    out.push(parent ? { pr, depth, parent } : { pr, depth });
+    const kids = [...(children.get(pr) ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const kid of kids) walk(kid, depth + 1, out);
+  };
+
+  // A root is a PR not stacked on another listed PR; PRs caught in a cycle become roots too.
+  const stacks: { rows: StackedPr[]; first: number }[] = [];
+  for (const pr of [...prs.filter((p) => !parentOf(p)), ...prs]) {
+    if (placed.has(pr)) continue;
+    const rows: StackedPr[] = [];
+    walk(pr, 0, rows);
+    rows[0]!.stackSize = rows.length;
+    stacks.push({ rows, first: Math.min(...rows.map((r) => rank.get(r.pr)!)) });
+  }
+  return stacks.sort((a, b) => a.first - b.first).flatMap((s) => s.rows);
 }
 
 /**

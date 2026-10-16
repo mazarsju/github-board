@@ -1,7 +1,9 @@
 // GitHub REST API client, used server-side (the token never leaves the backend).
-import type { CiState, PrDetails, PullRequest, RateInfo, RepoAccess, ReviewDecision, SearchResult, SortKey } from '../../shared/types.ts';
+import type { CiState, PrDetails, PullList, PullRequest, RateInfo, RepoAccess, ReviewDecision } from '../../shared/types.ts';
 
 const API = 'https://api.github.com';
+/** Pages of 100 PRs read per repository at most. */
+const MAX_PAGES = 10;
 
 export class GitHubError extends Error {
   status: number;
@@ -17,7 +19,7 @@ export interface GitHubUser {
 }
 
 export class GitHubClient {
-  rate: RateInfo = { core: null, search: null };
+  rate: RateInfo = { core: null };
   private detailsCache = new Map<string, Promise<PrDetails>>();
   private token: string;
 
@@ -50,8 +52,8 @@ export class GitHubClient {
   private trackRate(res: Response): void {
     const resource = res.headers.get('x-ratelimit-resource');
     const remaining = res.headers.get('x-ratelimit-remaining');
-    if (!resource || remaining == null) return;
-    this.rate[resource === 'search' ? 'search' : 'core'] = {
+    if (resource !== 'core' || remaining == null) return;
+    this.rate.core = {
       remaining: Number(remaining),
       limit: Number(res.headers.get('x-ratelimit-limit')),
       reset: Number(res.headers.get('x-ratelimit-reset')) * 1000,
@@ -65,7 +67,7 @@ export class GitHubClient {
   /**
    * Checks that the token can read each repository ("owner/repo").
    * Without access, GitHub answers 404 (private repository) or 403 (SAML SSO not authorized)
-   * and the search silently ignores those repositories: hence this explicit check.
+   * and their PRs are left out of the list (see listOpenPRs): hence this explicit check.
    */
   checkRepoAccess(repos: readonly string[]): Promise<RepoAccess[]> {
     return Promise.all(repos.map((repo) => this.request<{ private: boolean }>(`/repos/${repo}`).then(
@@ -74,18 +76,28 @@ export class GitHubClient {
     )));
   }
 
-  /** PR search through /search/issues. */
-  async searchPRs(query: string, { sort = 'updated', limit = 30 }: { sort?: SortKey; limit?: number } = {}): Promise<SearchResult> {
-    let q = query.trim();
-    if (!/\b(is|type):pr\b/.test(q)) q = `is:pr ${q}`;
-    const params = new URLSearchParams({
-      q,
-      sort,
-      order: 'desc',
-      per_page: String(Math.min(Math.max(limit, 1), 100)),
-    });
-    const data = await this.request<{ total_count: number; items: SearchItem[] }>(`/search/issues?${params}`);
-    return { total: data.total_count, items: data.items.map(normalizeSearchItem) };
+  /** Open PRs of one repository ("owner/repo"), newest first. */
+  async listOpenPulls(repo: string): Promise<PullRequest[]> {
+    const items: PullRequest[] = [];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const data = await this.request<PullListItem[]>(`/repos/${repo}/pulls?state=open&sort=created&direction=desc&per_page=100&page=${page}`);
+      items.push(...data.map((item) => normalizePull(repo, item)));
+      if (data.length < 100) break;
+    }
+    return items;
+  }
+
+  /**
+   * Open PRs of several repositories, the `limit` newest ones first. A repository the token
+   * cannot read (403/404) is skipped: checkRepoAccess reports it.
+   */
+  async listOpenPRs(repos: readonly string[], limit: number): Promise<PullList> {
+    const lists = await Promise.all(repos.map((repo) => this.listOpenPulls(repo).catch((err: unknown) => {
+      if (err instanceof GitHubError && (err.status === 403 || err.status === 404)) return [];
+      throw err;
+    })));
+    const all = lists.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return { total: all.length, items: all.slice(0, limit) };
   }
 
   /**
@@ -132,13 +144,15 @@ export class GitHubClient {
   }
 }
 
-interface SearchItem {
+interface PullListItem {
   number: number;
   title: string;
   html_url: string;
   draft?: boolean;
-  repository_url: string;
   user: { login: string; avatar_url: string } | null;
+  base: { ref: string };
+  /** `repo` is null when the fork was deleted. */
+  head: { ref: string; repo: { full_name: string } | null };
   created_at: string;
   updated_at: string;
 }
@@ -165,17 +179,19 @@ export interface StatusPayload {
   statuses: unknown[];
 }
 
-export function normalizeSearchItem(item: SearchItem): PullRequest {
-  const [owner = '', repo = ''] = (item.repository_url.split('/repos/')[1] ?? '').split('/');
+export function normalizePull(repo: string, item: PullListItem): PullRequest {
+  const [owner = '', name = ''] = repo.split('/');
   return {
-    key: `${owner}/${repo}#${item.number}`,
+    key: `${repo}#${item.number}`,
     owner,
-    repo,
+    repo: name,
     number: item.number,
     title: item.title,
     url: item.html_url,
     draft: !!item.draft,
     author: item.user ? { login: item.user.login, avatar: item.user.avatar_url } : null,
+    baseRef: item.base.ref,
+    headRef: item.head.repo?.full_name === repo ? item.head.ref : null,
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };

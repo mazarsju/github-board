@@ -1,6 +1,5 @@
 // Types shared by the frontend and the backend.
 
-export type SortKey = 'updated' | 'created' | 'comments';
 export type Theme = 'auto' | 'light' | 'dark';
 
 export interface Settings {
@@ -26,13 +25,29 @@ export interface PullRequest {
   url: string;
   draft: boolean;
   author: { login: string; avatar: string } | null;
+  /** Branch the PR merges into. */
+  baseRef: string;
+  /** Branch of the PR, or null when it lives in a fork (it cannot be the base of another PR here). */
+  headRef: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface SearchResult {
+export interface PullList {
+  /** Number of open PRs across the tracked repositories (items may be truncated). */
   total: number;
+  /** Newest first. */
   items: PullRequest[];
+}
+
+/** A PR placed in the list: depth 0 for a stack root or a standalone PR, then 1, 2… along the stack. */
+export interface StackedPr {
+  pr: PullRequest;
+  depth: number;
+  /** Number of PRs in the stack, on the root row only (1 for a standalone PR). */
+  stackSize?: number;
+  /** PR this one is stacked on (its base branch is that PR's branch). */
+  parent?: PullRequest;
 }
 
 export type ReviewDecision = 'approved' | 'changes' | 'pending';
@@ -70,7 +85,6 @@ export interface RateBucket {
 
 export interface RateInfo {
   core: RateBucket | null;
-  search: RateBucket | null;
 }
 
 export interface SessionInfo {

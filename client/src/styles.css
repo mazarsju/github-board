@@ -119,6 +119,19 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 /* The title column takes the remaining width and is truncated with an ellipsis. */
 .pr-list .title { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pr-list .title a { color: var(--text); font-weight: 600; }
+/* Stacked PRs: a bar ties the rows of a stack together, children are indented by their depth.
+   The bar stops at 3/4 of the stack's last row, so that two consecutive stacks stay apart. */
+.pr-list tr.in-stack td:first-child { position: relative; }
+.pr-list tr.in-stack td:first-child::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
+}
+.pr-list tr.stack-end td:first-child::before { bottom: 25%; }
+.pr-list .title.stacked { padding-left: calc(10px + var(--depth) * 6px); }
+.pr-list .stack-arrow { color: var(--accent); }
+.pr-list .stack-tag {
+  margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 10px; line-height: 18px;
+  border: 1px solid var(--accent); color: var(--accent);
+}
 .pr-list .title a:hover { color: var(--blue); }
 .pr-list .author img { width: 16px; height: 16px; border-radius: 50%; vertical-align: -3px; }
 .pr-list .approvals.ok { color: var(--green); font-weight: 600; }
