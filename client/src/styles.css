@@ -86,6 +86,11 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .btn.spinning { animation: spin 1s linear infinite; }
 .btn.icon { padding: 3px 5px; background: none; border-color: transparent; color: var(--muted); }
 .btn.icon:hover { color: var(--accent); background: var(--panel-2); border-color: var(--border); }
+/* Square icon button, same height as a regular .btn; only the icon spins while busy. */
+.btn.square { padding: 6px; color: var(--muted); }
+.btn.square:hover { color: var(--text); }
+.btn.square.busy svg { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .btn.square.busy svg { animation: none; } }
 .btn.small { padding: 1px 8px; font-size: 12px; }
 /* Review session running: the icon pulses in the accent color (yellow when it waits for an answer). */
 .btn.icon.running { color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
